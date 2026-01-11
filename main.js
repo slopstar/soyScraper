@@ -8,6 +8,9 @@ async function main() {
         defaultViewport: null,
     });
 
+    // Loops through each post
+    // TODO: find max post number prior to operation
+    // TODO: establish how many posts have already been downloaded in prior downloading sessions
     try {
         const urlPrefix = "https://soybooru.com/post/view/"
         for (let i = 1; i <= 2; i++) {

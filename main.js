@@ -1,4 +1,5 @@
-const { downloadImage } = require('./downloadImages.js');
+const { downloadImage } = require('./utils/downloadImages.js');
+const { getMaxPost } = require('./utils/maxPostChecker.js');
 const puppeteer = require('puppeteer');
 
 async function main() {

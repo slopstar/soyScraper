@@ -1,10 +1,14 @@
 /**
+ * Fetches the maximum post ID from the SoyBooru by going to the post list page
+ * and extracting the ID from the latest post link.
  * @param {import('puppeteer').Browser} browser
  * @returns {Promise<number|null>} max post id (integer) or null if not found
  */
 async function getMaxPost(browser) {
     const postListUrl = 'https://soybooru.com/post/list';
     let page;
+
+    // Open new page
     try {
         page = await browser.newPage();
         console.log(`Navigating to: ${postListUrl}...`);
@@ -19,12 +23,7 @@ async function getMaxPost(browser) {
             href = null;
         }
 
-        if (!href) {
-            // Fallback: search any anchor whose href contains `/post/view/` and return the first match
-            const links = await page.$$eval('a', (as) => as.map((a) => a.getAttribute('href')));
-            href = links.find((h) => typeof h === 'string' && /\/post\/view\/(\d+)/.test(h)) || null;
-        }
-
+        // If link couldn't be found, return null
         if (!href) {
             console.warn('Could not locate latest post link on post list page');
             return null;
@@ -41,6 +40,7 @@ async function getMaxPost(browser) {
         console.error(`Error in getMaxPost: ${error.message}`);
         return null;
     } finally {
+        // Ensure the page is closed
         if (page) await page.close();
     }
 }

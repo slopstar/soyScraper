@@ -1,7 +1,7 @@
 // TODO: do the rest of the docstrings
 
 const fs = require('fs');
-const { url } = require('inspector');
+const url = require('inspector');
 const path = require('path');
 
 function ensureDownloadDir(dir) {

@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const downloadDir = path.join(__dirname, '..', 'downloadedImages');
+const downloadDir = path.join(__dirname, 'downloadedImages');
 
 async function checkDownloadDir(dir) {
     try {
@@ -12,15 +12,8 @@ async function checkDownloadDir(dir) {
     }
 }
 
-async function listAllDownloads(dir) {
-    fs.readdir(dir, (err, files) => {
-        if (err) {
-            console.error(`Error: ${err.message}`);
-        } else {
-            console.log("Files in directory:", files);
-        }
-    });
-}
+// TODO: Implement some sort of bucket sort function that checks 
+// local files based on tags
 
 if (require.main === module) {
     checkDownloadDir(downloadDir).catch((error) => {

@@ -1,10 +1,13 @@
+const path = require('path');
 const { downloadFromUrl } = require('./utils/downloadImages.js');
 const { getMaxPost } = require('./utils/maxPostChecker.js');
 const { launchBrowser } = require('./utils/browser.js');
 
 async function main(options = {}) {
     const { start = 1, end: optEnd } = options;
+    const downloadDir = path.join(__dirname, 'downloadedImages');
     const browser = await launchBrowser();
+
     try {
         const maxPost = await getMaxPost(browser);
         const end = typeof optEnd === 'number' && optEnd > 0 ? optEnd : maxPost || start;
@@ -13,7 +16,7 @@ async function main(options = {}) {
         const urlPrefix = 'https://soybooru.com/post/view/';
         for (let i = start; i <= end; i++) {
             const postUrl = `${urlPrefix}${i}`;
-            await downloadFromUrl(postUrl, browser, options);
+            await downloadFromUrl(postUrl, browser, { ...options, dir: downloadDir });
         }
     } finally {
         await browser.close();

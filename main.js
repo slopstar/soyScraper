@@ -2,6 +2,7 @@ const path = require('path');
 const { downloadFromUrl } = require('./utils/downloadImages.js');
 const { getMaxPost } = require('./utils/maxPostChecker.js');
 const { launchBrowser } = require('./utils/browser.js');
+const { extractImageTags } = require("./utils/getImageTags.js");
 
 async function main(options = {}) {
     const { start = 1, end: optEnd } = options;
@@ -16,6 +17,16 @@ async function main(options = {}) {
         const urlPrefix = 'https://soybooru.com/post/view/';
         for (let i = start; i <= end; i++) {
             const postUrl = `${urlPrefix}${i}`;
+            const page = await browser.newPage();
+            try {
+                console.log(`Navigating to: ${postUrl}...`);
+                await page.goto(postUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+            } catch (err) {
+                console.error(`Error extracting tags from ${postUrl}: ${err.message}`);
+            } finally {
+                await page.close();
+            }
+            
             await downloadFromUrl(postUrl, browser, { ...options, dir: downloadDir });
         }
     } finally {

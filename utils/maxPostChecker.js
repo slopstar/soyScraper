@@ -11,7 +11,6 @@ async function getMaxPost(browser) {
     // Open new page
     try {
         page = await browser.newPage();
-        console.log(`Navigating to: ${postListUrl}...`);
         await page.goto(postListUrl, { waitUntil: 'networkidle2', timeout: 15000 });
 
         // The latest post link is always at `a.thumb:nth-child(1)` and formatted

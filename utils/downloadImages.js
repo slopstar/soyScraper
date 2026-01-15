@@ -91,7 +91,6 @@ async function downloadFromUrl(url, browser, options = {}) {
 	ensureDownloadDir(dir);
 	const page = await browser.newPage();
 	try {
-		console.log(`Navigating to: ${url}...`);
 		await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
 
 		const imageUrls = await extractImageUrls(page, url);

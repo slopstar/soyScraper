@@ -2,7 +2,6 @@ const path = require('path');
 const { downloadFromUrl } = require('./utils/downloadImages.js');
 const { getMaxPost } = require('./utils/maxPostChecker.js');
 const { launchBrowser } = require('./utils/browser.js');
-const { extractImageTags } = require("./utils/getImageTags.js");
 
 async function main(options = {}) {
     const { start = 1, end: optEnd } = options;
@@ -21,7 +20,6 @@ async function main(options = {}) {
             try {
                 console.log(`Navigating to: ${postUrl}...`);
                 await page.goto(postUrl, { waitUntil: 'networkidle2', timeout: 30000 });
-                const postTags = await extractImageTags(page);
                 console.log(postTags);
             } catch (err) {
                 console.error(`Error navigating to ${postUrl}:/n ${err.message}`);

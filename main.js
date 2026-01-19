@@ -20,7 +20,7 @@ async function main(options = {}) {
             try {
                 console.log(`Navigating to: ${postUrl}...`);
                 await page.goto(postUrl, { waitUntil: 'networkidle2', timeout: 30000 });
-                console.log(postTags);
+                console.log(`Loaded ${postUrl}`);
             } catch (err) {
                 console.error(`Error navigating to ${postUrl}:/n ${err.message}`);
             } finally {

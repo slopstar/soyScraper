@@ -120,4 +120,4 @@ async function downloadFromUrl(url, browser, options = {}) {
 	}
 }
 
-module.exports = { ensureDownloadDir, extractImageUrls, downloadImages, downloadFromUrl, extractImageTags };
+module.exports = { downloadFromUrl };

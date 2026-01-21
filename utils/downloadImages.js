@@ -1,14 +1,7 @@
 const fs = require('fs');
 const url = require('inspector');
 const path = require('path');
-
-function ensureDownloadDir(dir) {
-	if (!fs.existsSync(dir)) {
-		fs.mkdirSync(dir, { recursive: true });
-		console.log(`Created directory: ${dir}`);
-	}
-	return dir;
-}
+const { ensureDownloadDir, createSpecificDirectories } = require('./localFileManager');
 
 async function extractImageUrls(page, referer) {
 	// Get the first child anchor from the image list and extract its image src
@@ -113,6 +106,13 @@ async function downloadFromUrl(url, browser, options = {}) {
 
 		// Pass the page object to downloadImages so it can use the same browser context
 		await downloadImages(imageUrls, page, dir);
+		const tagData = await extractImageTags(page);
+		if (tagData) {
+			const { variant, tags } = tagData;
+			createSpecificDirectories(dir, variant, tags);
+		} else {
+			console.error(`No tag data found for ${url}`);
+		}
 	} catch (err) {
 		console.error(`Error downloading from ${url}: ${err.message}`);
 	} finally {

@@ -2,19 +2,12 @@ const fs = require('fs');
 const path = require('path');
 
 function ensureDownloadDir(dir) {
-	if (!fs.existsSync(dir)) {
-		fs.mkdirSync(dir, { recursive: true });
-		console.log(`Created directory: ${dir}`);
-	}
+	if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 	return dir;
 }
 
-function createSpecificDirectories(baseDir, variant, tags) {
-    // Make directory for variant
-    const variantDir = path.join(baseDir, variant);
-    ensureDownloadDir(variantDir);
-
-    const filename = tags.join('_');
+function createSpecificDirectories(baseDir, variant) {
+    ensureDownloadDir(path.join(baseDir, variant));
 }
 
 module.exports = { ensureDownloadDir, createSpecificDirectories };

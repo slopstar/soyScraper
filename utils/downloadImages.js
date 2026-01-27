@@ -96,6 +96,7 @@ async function downloadFromUrl(url, browser, options = {}) {
 	const postNumber = new URL(url).pathname.split('/').filter(Boolean).pop() || 'unknown';
 	ensureDownloadDir(dir);
 	const page = await browser.newPage();
+	console.log("Navigating to", url);
 	try {
 		await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
 		const imageUrls = await extractImageUrls(page, url);

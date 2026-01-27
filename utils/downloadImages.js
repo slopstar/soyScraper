@@ -1,17 +1,11 @@
 const fs = require('fs');
-const url = require('inspector');
 const path = require('path');
 const { ensureDownloadDir, createSpecificDirectories } = require('./localFileManager');
 
 async function extractImageUrls(page, referer) {
-	// Get the first child anchor from the image list and extract its image src
-	// Selector: first anchor child of image list container, then get its img#main_image
-	const src = await page.$eval('div.image-list > a:first-child img#main_image', (img) =>
-		img.getAttribute('src')
-	).catch(() => {
-		// Fallback: if the above selector doesn't work, just get the first img#main_image
-		return page.$eval('img#main_image', (img) => img.getAttribute('src'));
-	}).catch(() => null);
+	const src = await page.$eval('div.image-list > a:first-child img#main_image', (img) => img.getAttribute('src'))
+		.catch(() => page.$eval('img#main_image', (img) => img.getAttribute('src')))
+		.catch(() => null);
 	
 	if (!src) {
 		return [];
@@ -26,23 +20,30 @@ async function extractImageUrls(page, referer) {
 	}
 }
 
-function sanitizeFilename(unsanitizedUrl) {
-	let unsanitizedFilename = unsanitizedUrl.at(-1);
-	let sanitizedFilename = unsanitizedFilename.split("%20-%20").join('-');
-	return sanitizedFilename;
+function getExtension(imageUrl) {
+	const pathname = new URL(imageUrl).pathname;
+	const base = pathname.split('/').pop() || '';
+	const ext = path.extname(base);
+	return ext || '.jpg';
 }
 
-async function downloadImages(imageUrls, page, dir) {
+/** Format: postnumber_variant_tag1_tag2_tag3.ext */
+function buildFilename(postNumber, variant, tags, imageUrl) {
+	const ext = getExtension(imageUrl);
+	const parts = [postNumber, variant, ...(tags || [])]
+		.map((s) => (s != null && String(s).trim() !== '' ? String(s).trim() : 'unknown'));
+	return parts.join('_') + ext;
+}
+
+async function downloadImages(imageUrls, page, dir, postNumber, tagData) {
+	const variant = (tagData?.variant != null && String(tagData.variant).trim() !== '') ? tagData.variant : 'unknown';
+	const tags = tagData?.tags ?? [];
 	ensureDownloadDir(dir);
+	ensureDownloadDir(path.join(dir, variant));
 	console.log(`Found ${imageUrls.length} valid image URLs.`);
 
-	for (let i = 0; i < imageUrls.length; i++) {
-		const imageUrl = imageUrls[i];
-		console.log(`Downloading: ${imageUrl}`);
-		
+	for (const imageUrl of imageUrls) {
 		try {
-			// Use page.evaluate with fetch to download the image in the browser context
-			// This automatically includes all cookies and headers
 			const base64Data = await page.evaluate(async (url) => {
 				const response = await fetch(url);
 				if (!response.ok) {
@@ -51,23 +52,15 @@ async function downloadImages(imageUrls, page, dir) {
 				const blob = await response.blob();
 				return new Promise((resolve, reject) => {
 					const reader = new FileReader();
-					reader.onloadend = () => {
-						// Remove data URL prefix (e.g., "data:image/jpeg;base64,")
-						const base64 = reader.result.split(',')[1];
-						resolve(base64);
-					};
+					reader.onloadend = () => resolve(reader.result.split(',')[1]);
 					reader.onerror = reject;
 					reader.readAsDataURL(blob);
 				});
 			}, imageUrl);
-
-			// Convert base64 to buffer
 			const buffer = Buffer.from(base64Data, 'base64');
 
-			const urlParts = new URL(imageUrl).pathname.split('/');
-			const filename = sanitizeFilename(urlParts);
-
-			const filePath = path.join(dir, filename);
+			const filename = buildFilename(postNumber, variant, tags, imageUrl);
+			const filePath = path.join(dir, variant, filename);
 			fs.writeFileSync(filePath, buffer);
 			console.log(`Saved: ${filename}`);
 		} catch (err) {
@@ -78,16 +71,19 @@ async function downloadImages(imageUrls, page, dir) {
 
 async function extractImageTags(page) {
     try {
-        const variantName = await page.$eval('#Variantleft > div:nth-child(2) > table:nth-child(1) > tbody:nth-child(3) > tr:nth-child(1) > td:nth-child(2) > a.tag_name', (a) =>
-            a.innerHTML);
-        
-        const tagList = await page.$$eval('#Tagsleft > div:nth-child(2) > table:nth-child(1) > tbody:nth-child(3) .tag_name', (elements) =>
-            elements.map(el => el.innerHTML));
+        // Single variant: #Variantleft. Multiple: #Variantsleft (one link per row).
+        const variantSelector = '#Variantleft > div:nth-child(2) > table:nth-child(1) > tbody:nth-child(3) tr td:nth-child(2) a, #Variantsleft > div:nth-child(2) > table:nth-child(1) > tbody:nth-child(3) tr td:nth-child(2) a';
+        const variantNames = await page.$$eval(variantSelector, (elements) =>
+            elements.map((el) => (el.textContent || el.innerHTML || '').trim()).filter(Boolean));
+        const variant =
+            variantNames.length > 1 ? 'multiple'
+            : variantNames.length === 1 ? variantNames[0]
+            : 'unknown';
 
-        return { variant: variantName, tags: tagList };
+        const tags = await page.$$eval('#Tagsleft > div:nth-child(2) > table:nth-child(1) > tbody:nth-child(3) .tag_name', (els) => els.map((el) => el.innerHTML));
+        return { variant, tags };
     } catch (err) {
-        // Element not found or selector doesn't match
-        console.warn(`Error extracting tags from ${page}: ${err.message}`);
+        console.warn(`extractImageTags: ${err.message}`);
         return null;
     }
 }
@@ -97,22 +93,16 @@ async function downloadFromUrl(url, browser, options = {}) {
 	if (!dir) {
 		throw new Error('Download directory must be provided in options.dir');
 	}
+	const postNumber = new URL(url).pathname.split('/').filter(Boolean).pop() || 'unknown';
 	ensureDownloadDir(dir);
 	const page = await browser.newPage();
 	try {
 		await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-
 		const imageUrls = await extractImageUrls(page, url);
-
-		// Pass the page object to downloadImages so it can use the same browser context
-		await downloadImages(imageUrls, page, dir);
 		const tagData = await extractImageTags(page);
-		if (tagData) {
-			const { variant, tags } = tagData;
-			createSpecificDirectories(dir, variant, tags);
-		} else {
-			console.error(`No tag data found for ${url}`);
-		}
+		await downloadImages(imageUrls, page, dir, postNumber, tagData);
+		if (tagData) createSpecificDirectories(dir, tagData.variant);
+		else console.warn(`No tag data for ${url}`);
 	} catch (err) {
 		console.error(`Error downloading from ${url}: ${err.message}`);
 	} finally {

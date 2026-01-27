@@ -3,6 +3,13 @@ const { downloadFromUrl } = require('./utils/downloadImages.js');
 const { getMaxPost } = require('./utils/maxPostChecker.js');
 const { launchBrowser } = require('./utils/browser.js');
 
+/** Random delay between min and max ms to avoid bot detection */
+function randomSleep(minMs = 3000, maxMs = 4000) {
+  const ms = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+  console.log(`Waiting ${ms / 1000} seconds before next post...`);
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function main(options = {}) {
     const { start = 1, end: optEnd } = options;
     const downloadDir = path.join(__dirname, 'downloadedImages');
@@ -16,22 +23,11 @@ async function main(options = {}) {
         const urlPrefix = 'https://soybooru.com/post/view/';
         for (let i = start; i <= end; i++) {
             const postUrl = `${urlPrefix}${i}`;
-            const page = await browser.newPage();
-            try {
-                console.log(`Navigating to: ${postUrl}...`);
-                await page.goto(postUrl, { waitUntil: 'networkidle2', timeout: 30000 });
-                console.log(`Loaded ${postUrl}`);
-            } catch (err) {
-                console.error(`Error navigating to ${postUrl}:/n ${err.message}`);
-            } finally {
-                await page.close();
-            }
-            
             await downloadFromUrl(postUrl, browser, { ...options, dir: downloadDir });
+            if (i < end) await randomSleep(1000, 3500);
         }
     } finally {
         await browser.close();
-        console.log('Browser closed');
     }
 }
 

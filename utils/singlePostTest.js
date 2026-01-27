@@ -1,6 +1,6 @@
 const path = require('path');
-const { downloadFromUrl } = require('./utils/downloadImages.js');
-const { launchBrowser } = require('./utils/browser.js');
+const { downloadFromUrl } = require('./downloadImages.js');
+const { launchBrowser } = require('./browser.js');
 
 /** Run the full download flow for a single post (same as main.js but one post, no sleep). */
 async function main(options = {}) {
@@ -9,7 +9,7 @@ async function main(options = {}) {
     throw new Error('Option "post" must be a positive integer');
   }
 
-  const downloadDir = path.join(__dirname, 'downloadedImages');
+  const downloadDir = path.join(__dirname, '..', 'downloadedImages');
   const urlPrefix = 'https://soybooru.com/post/view/';
   const postUrl = `${urlPrefix}${postNumber}`;
 

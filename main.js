@@ -2,17 +2,22 @@ const path = require('path');
 const { downloadFromUrl } = require('./utils/downloadImages.js');
 const { getMaxPost } = require('./utils/maxPostChecker.js');
 const { launchBrowser } = require('./utils/browser.js');
+const { getLastDownloadedPost } = require('./utils/localFileManager.js');
 
 /** Random delay between min and max ms to avoid bot detection */
-function randomSleep(minMs = 3000, maxMs = 4000) {
+function randomSleep(minMs = 5000, maxMs = 6000) {
   const ms = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
   console.log(`Waiting ${ms / 1000} seconds before next post...`);
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function main(options = {}) {
-    const { start = 1, end: optEnd } = options;
+    const { start: optStart, end: optEnd } = options;
     const downloadDir = path.join(__dirname, 'downloadedImages');
+    const highestPost = getLastDownloadedPost(downloadDir);
+    const defaultStart = highestPost != null ? highestPost + 1 : 1;
+    const start = typeof optStart === 'number' && optStart > 0 ? optStart : defaultStart;
+
     const browser = await launchBrowser();
 
     try {
@@ -24,7 +29,7 @@ async function main(options = {}) {
         for (let i = start; i <= end; i++) {
             const postUrl = `${urlPrefix}${i}`;
             await downloadFromUrl(postUrl, browser, { ...options, dir: downloadDir });
-            if (i < end) await randomSleep(1000, 3500);
+            if (i < end) await randomSleep();
         }
     } finally {
         await browser.close();
@@ -32,10 +37,7 @@ async function main(options = {}) {
 }
 
 if (require.main === module) {
-    const argv = process.argv.slice(2);
-    const start = argv[0] ? parseInt(argv[0], 10) : 1;
-    const end = argv[1] ? parseInt(argv[1], 10) : undefined;
-    main({ start, end }).catch((err) => {
+    main().catch((err) => {
         console.error(err);
         process.exit(1);
     });

@@ -31,8 +31,8 @@ function getExtension(imageUrl) {
 function buildFilename(postNumber, variant, tags, imageUrl) {
 	const ext = getExtension(imageUrl);
 	const parts = [postNumber, variant, ...(tags || [])]
-		.map((s) => (s != null && String(s).trim() !== '' ? String(s).trim() : 'unknown'));
-	return parts.join('_') + ext;
+		.map((s) => (s != null && String(s).trim() !== '' ? String(s).trim().replace(/\s+/g, '_') : 'unknown'));
+	return parts.join(' ') + ext;
 }
 
 async function downloadImages(imageUrls, page, dir, postNumber, tagData) {
@@ -48,7 +48,7 @@ async function downloadImages(imageUrls, page, dir, postNumber, tagData) {
 				const response = await fetch(url);
 				if (!response.ok) {
 					throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-				}
+					t}
 				const blob = await response.blob();
 				return new Promise((resolve, reject) => {
 					const reader = new FileReader();

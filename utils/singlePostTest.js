@@ -16,11 +16,13 @@ async function main(options = {}) {
   console.log(`Single-post test: downloading post ${postNumber} from ${postUrl}`);
 
   const browser = await launchBrowser();
+  const page = await browser.newPage();
 
   try {
-    await downloadFromUrl(postUrl, browser, { ...options, dir: downloadDir });
+    await downloadFromUrl(postUrl, page, { ...options, dir: downloadDir });
     console.log('Single-post test done.');
   } finally {
+    await page.close();
     await browser.close();
   }
 }

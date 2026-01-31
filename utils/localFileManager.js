@@ -23,17 +23,19 @@ function getLastDownloadedPost(dir) {
         .filter((file) => fs.statSync(path.join(dir, file)).isDirectory());
 
 	// If there are no subdirectories, return null
-	if (subdirs.length === 0) return null;
+	if (subdirs.length === 0 && fs.readdirSync(dir).length === 0) return null;
 
 	// Loop through subdirectories to find highest post number
 	let highestPost = 0;
-	for (const subdir of subdirs) {
+	const dirsToCheck = ['.'].concat(subdirs);
+	for (const subdir of dirsToCheck) {
 		// Loop through each file in the subdir, extract post numbers, and track the highest
-		const subdirPath = path.join(dir, subdir);
+		const subdirPath = subdir === '.' ? dir : path.join(dir, subdir);
+		if (!fs.statSync(subdirPath).isDirectory()) continue;
 		const files = fs.readdirSync(subdirPath).filter((file) => fs.statSync(path.join(subdirPath, file)).isFile());
 		for (const file of files) {
-			// File format: "postnumber_something_something_etc.ext"
-			const match = file.match(/^(\d+)_/);
+			// File format: "postnumber ..." or "postnumber_something_etc.ext"
+			const match = file.match(/^(\d+)/);
 			if (match) {
 				const postNum = parseInt(match[1], 10);
 				if (!isNaN(postNum) && postNum > highestPost) {

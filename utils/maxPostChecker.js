@@ -4,13 +4,20 @@ async function getMaxPost(browser) {
     try {
         page = await browser.newPage();
         await page.goto('https://soybooru.com/post/list', { waitUntil: 'networkidle2', timeout: 15000 });
-        const href = await page.$eval('a.thumb:nth-child(1)', (el) => el.getAttribute('href')).catch(() => null);
-        if (!href) {
-            console.warn('Could not locate latest post link');
+        const hrefs = await page.$$eval('a.thumb', (els) =>
+            els.map((el) => el.getAttribute('href')).filter(Boolean));
+        if (!hrefs.length) {
+            console.warn('Could not locate post links on list page');
             return null;
         }
-        const match = href.match(/\/post\/view\/(\d+)/);
-        return match ? parseInt(match[1], 10) : null;
+        const ids = hrefs
+            .map((href) => {
+                const match = href.match(/\/post\/view\/(\d+)/);
+                return match ? parseInt(match[1], 10) : null;
+            })
+            .filter((id) => Number.isInteger(id));
+        if (!ids.length) return null;
+        return Math.max(...ids);
     } catch (err) {
         console.error(`getMaxPost: ${err.message}`);
         return null;

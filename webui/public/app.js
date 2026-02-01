@@ -18,6 +18,15 @@ const stopDownloadButton = document.getElementById('stopDownload');
 const refreshDownloadButton = document.getElementById('refreshDownload');
 const downloadStatusEl = document.getElementById('downloadStatus');
 const downloadLogEl = document.getElementById('downloadLog');
+const downloadFab = document.getElementById('downloadFab');
+const downloadPopover = document.getElementById('downloadPopover');
+const downloadPopoverClose = document.getElementById('downloadPopoverClose');
+const downloadDock = document.getElementById('downloadDock');
+const downloadLogToggle = document.getElementById('toggleDownloadLog');
+const skipNsfwInput = document.getElementById('skipNsfw');
+const nsfwFileInput = document.getElementById('nsfwFile');
+const skipNsflInput = document.getElementById('skipNsfl');
+const nsflFileInput = document.getElementById('nsflFile');
 
 let currentPage = 1;
 let currentPageSize = Number.parseInt(pageSizeSelect.value, 10) || 48;
@@ -25,6 +34,8 @@ let totalPages = 1;
 let lastDownloadStatus = null;
 let downloadPollTimer = null;
 let downloadPollInFlight = false;
+let downloadPopoverOpen = false;
+let downloadLogVisible = false;
 
 function escapeHtml(value) {
   return String(value)
@@ -43,8 +54,22 @@ function normalizeText(value) {
     .trim();
 }
 
+function normalizeFilterValue(value) {
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, '_');
+}
+
+function normalizeQuery(input) {
+  return String(input || '').replace(
+    /\b(tag|t|variant|v)\s*:\s*"([^"]+)"/gi,
+    (match, key, value) => `${key.toLowerCase()}:${normalizeFilterValue(value)}`
+  );
+}
+
 function parseTokens(input) {
-  return (input || '').match(/"[^"]+"|\S+/g) || [];
+  const normalized = normalizeQuery(input);
+  return normalized.match(/"[^"]+"|\S+/g) || [];
 }
 
 function extractActiveFilters() {
@@ -116,9 +141,8 @@ function toggleFilterToken(type, value) {
   }
 
   if (!removed) {
-    const needsQuote = /\s/.test(value);
-    const tokenValue = needsQuote ? `"${value}"` : value;
     const prefix = type === 'tag' ? 'tag' : 'variant';
+    const tokenValue = normalizeFilterValue(value);
     kept.push(`${prefix}:${tokenValue}`);
   }
 
@@ -159,8 +183,7 @@ function renderAutocomplete(variants, tags) {
   };
 
   const formatToken = (prefix, raw) => {
-    const needsQuote = /\s/.test(raw);
-    const tokenValue = needsQuote ? `"${raw}"` : raw;
+    const tokenValue = normalizeFilterValue(raw);
     return `${prefix}:${tokenValue}`;
   };
 
@@ -184,29 +207,139 @@ function renderResults(results) {
     card.className = 'card';
     card.style.setProperty('--i', idx);
 
+    const media = document.createElement('div');
+    media.className = 'card-media';
+
     const img = document.createElement('img');
     img.src = item.urlPath;
     img.alt = item.fileName;
     img.loading = 'lazy';
-
-    const title = document.createElement('h3');
-    title.textContent = item.postNumber ? `Post ${item.postNumber}` : item.fileName;
+    img.addEventListener('dblclick', (event) => {
+      event.preventDefault();
+      window.open(item.urlPath, '_blank', 'noopener');
+    });
 
     const formatList = (list) =>
       list.map((value) => String(value).replace(/_/g, ' ')).join(', ');
     const variants = item.variants && item.variants.length ? formatList(item.variants) : '—';
     const tags = item.tags && item.tags.length ? formatList(item.tags) : '—';
 
-    const meta = document.createElement('div');
-    meta.className = 'meta-line';
-    meta.innerHTML = `<strong>Variants:</strong> ${escapeHtml(variants)}<br />` +
-      `<strong>Tags:</strong> ${escapeHtml(tags)}`;
+    const overlay = document.createElement('div');
+    overlay.className = 'card-overlay';
 
-    card.appendChild(img);
-    card.appendChild(title);
-    card.appendChild(meta);
+    const overlayTop = document.createElement('div');
+    overlayTop.className = 'card-overlay-top';
+
+    const openFull = document.createElement('a');
+    openFull.className = 'open-full';
+    openFull.href = item.urlPath;
+    openFull.target = '_blank';
+    openFull.rel = 'noopener';
+    openFull.setAttribute('aria-label', 'Open full image in new tab');
+    openFull.title = 'Open full image in new tab';
+    openFull.textContent = '↗';
+    overlayTop.appendChild(openFull);
+
+    const info = document.createElement('div');
+    info.className = 'card-info';
+
+    const addInfoLine = (label, valueNode) => {
+      const line = document.createElement('div');
+      line.className = 'info-line';
+      const labelEl = document.createElement('span');
+      labelEl.className = 'info-label';
+      labelEl.textContent = label;
+      const valueEl = valueNode || document.createElement('span');
+      valueEl.classList.add('info-value');
+      line.appendChild(labelEl);
+      line.appendChild(valueEl);
+      info.appendChild(line);
+    };
+
+    const postValue = document.createElement('span');
+    postValue.textContent = item.postNumber ? String(item.postNumber) : '—';
+    addInfoLine('Post', postValue);
+
+    const variantValue = document.createElement('span');
+    variantValue.textContent = variants;
+    addInfoLine('Variants', variantValue);
+
+    const tagValue = document.createElement('span');
+    tagValue.textContent = tags;
+    addInfoLine('Tags', tagValue);
+
+    if (item.metaUrl) {
+      const link = document.createElement('a');
+      link.href = item.metaUrl;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.className = 'info-link';
+      link.textContent = item.metaUrl;
+      addInfoLine('URL', link);
+    } else {
+      const urlValue = document.createElement('span');
+      urlValue.textContent = '—';
+      addInfoLine('URL', urlValue);
+    }
+
+    overlay.appendChild(overlayTop);
+    overlay.appendChild(info);
+
+    media.appendChild(img);
+    media.appendChild(overlay);
+
+    card.appendChild(media);
     resultsEl.appendChild(card);
   });
+}
+
+function setDownloadPopoverOpen(open) {
+  if (!downloadPopover) return;
+  downloadPopoverOpen = open;
+  downloadPopover.hidden = !open;
+  if (downloadFab) {
+    downloadFab.setAttribute('aria-expanded', String(open));
+    downloadFab.setAttribute('aria-pressed', String(open));
+  }
+  downloadDock?.classList.toggle('is-open', open);
+}
+
+function isDownloadPopoverOpen() {
+  return downloadDock?.classList.contains('is-open') ?? false;
+}
+
+function toggleDownloadPopover() {
+  if (!downloadPopover) return;
+  setDownloadPopoverOpen(!isDownloadPopoverOpen());
+}
+
+function closeDownloadPopover() {
+  setDownloadPopoverOpen(false);
+}
+
+function setDownloadLogVisible(visible) {
+  downloadLogVisible = visible;
+  if (downloadLogEl) downloadLogEl.hidden = !visible;
+  if (downloadLogToggle) downloadLogToggle.textContent = visible ? 'Hide log' : 'Show log';
+}
+
+function buildDownloadArgs() {
+  const args = [];
+  if (skipNsfwInput?.checked) {
+    args.push('--skip-nsfw');
+    const nsfwPath = nsfwFileInput?.value?.trim();
+    if (nsfwPath) {
+      args.push('--nsfw-file', nsfwPath);
+    }
+  }
+  if (skipNsflInput?.checked) {
+    args.push('--skip-nsfl');
+    const nsflPath = nsflFileInput?.value?.trim();
+    if (nsflPath) {
+      args.push('--nsfl-file', nsflPath);
+    }
+  }
+  return args;
 }
 
 function updatePagination() {
@@ -292,7 +425,11 @@ function renderDownloadStatus(status) {
   const state = status.running ? 'Running' : 'Idle';
   const code = status.exitCode == null ? '—' : status.exitCode;
   downloadStatusEl.textContent = `${state}. Started: ${started}. Ended: ${ended}. Exit code: ${code}.`;
-  downloadLogEl.textContent = (status.log || []).join('\n');
+  const logLines = (status.log || []).slice().reverse();
+  downloadLogEl.textContent = logLines.join('\n');
+  if (downloadLogVisible && downloadLogEl) {
+    downloadLogEl.scrollTop = 0;
+  }
 
   startDownloadButton.disabled = status.running;
   stopDownloadButton.disabled = !status.running;
@@ -317,7 +454,7 @@ async function startDownload() {
     const response = await fetch('/api/download/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ args: [] }),
+      body: JSON.stringify({ args: buildDownloadArgs() }),
     });
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.error || 'Start failed');
@@ -387,6 +524,20 @@ pageSizeSelect.addEventListener('change', () => {
 startDownloadButton.addEventListener('click', startDownload);
 stopDownloadButton.addEventListener('click', stopDownload);
 refreshDownloadButton.addEventListener('click', pollDownloadStatus);
+downloadFab?.addEventListener('click', (event) => {
+  event.preventDefault();
+  toggleDownloadPopover();
+});
+downloadPopoverClose?.addEventListener('click', (event) => {
+  event.preventDefault();
+  closeDownloadPopover();
+});
+downloadLogToggle?.addEventListener('click', () => {
+  setDownloadLogVisible(!downloadLogVisible);
+});
+
+setDownloadLogVisible(false);
+setDownloadPopoverOpen(false);
 
 loadFacets();
 runSearch({ page: 1 });

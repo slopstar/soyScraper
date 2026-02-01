@@ -12,10 +12,11 @@
       <header class="hero">
         <div>
           <p class="eyebrow">SoyScraper</p>
-          <h1>Downloaded Image Browser</h1>
+          <h1>Local Soyjak Library & Downloader</h1>
           <p class="subhead">
             Search across variants and tags. Try <span class="mono">variant:foo</span> or
-            <span class="mono">tag:bar</span>.
+            <span class="mono">tag:bar</span>. Use underscores for multi-word values
+            (<span class="mono">variant:markiplier_soyjak</span>).
           </p>
         </div>
         <div class="meta">
@@ -49,20 +50,6 @@
 
       <section class="status" id="status">Ready.</section>
 
-      <section class="download-panel">
-        <div>
-          <h2>Downloader</h2>
-          <p class="meta-line">Kick off a full run and keep an eye on recent output.</p>
-        </div>
-        <div class="download-controls">
-          <button id="startDownload" class="primary">Start Big Download</button>
-          <button id="stopDownload" class="ghost">Stop</button>
-          <button id="refreshDownload" class="ghost">Refresh Status</button>
-        </div>
-        <div class="download-status" id="downloadStatus">Idle.</div>
-        <pre class="download-log" id="downloadLog"></pre>
-      </section>
-
       <section class="results" id="results"></section>
 
       <section class="pagination">
@@ -82,6 +69,44 @@
         </label>
       </section>
     </main>
+
+    <div class="download-dock" id="downloadDock">
+      <button id="downloadFab" class="download-fab" aria-haspopup="dialog" aria-expanded="false" aria-controls="downloadPopover">
+        <span class="download-fab-icon">↓</span>
+        <span class="sr-only">Download options</span>
+      </button>
+      <section class="download-popover" id="downloadPopover" role="dialog" aria-label="Downloader" hidden>
+        <header class="download-popover-header">
+          <div>
+            <h2>Downloader</h2>
+            <p class="meta-line">Download the full Soybooru archive with optional tag filters.</p>
+          </div>
+          <button id="downloadPopoverClose" class="icon-button" type="button" aria-label="Close downloader">×</button>
+        </header>
+        <div class="download-popover-body">
+          <button id="startDownload" class="primary">Download all soyjaks from soybooru</button>
+          <div class="download-options">
+            <label class="toggle">
+              <input id="skipNsfw" type="checkbox" />
+              <span>Skip NSFW tags</span>
+            </label>
+            <input id="nsfwFile" type="text" value="data/nsfw_tags.txt" placeholder="NSFW tag list (txt path)" />
+            <label class="toggle">
+              <input id="skipNsfl" type="checkbox" />
+              <span>Skip NSFL tags</span>
+            </label>
+            <input id="nsflFile" type="text" value="data/nsfl_tags.txt" placeholder="NSFL tag list (txt path)" />
+          </div>
+          <div class="download-actions">
+            <button id="stopDownload" class="ghost">Stop</button>
+            <button id="refreshDownload" class="ghost">Refresh</button>
+            <button id="toggleDownloadLog" class="ghost subtle" type="button">Show log</button>
+          </div>
+          <div class="download-status" id="downloadStatus">Idle.</div>
+          <pre class="download-log" id="downloadLog" hidden></pre>
+        </div>
+      </section>
+    </div>
 
     <script src="/app.js"></script>
   </body>

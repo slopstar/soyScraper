@@ -5,6 +5,35 @@ const { pipeline } = require('stream/promises');
 const { ensureDownloadDir } = require('../fs/localFileManager');
 const { METADATA_DB } = require('../config');
 const { upsertMetadata } = require('../db/metadataStore');
+const DEFAULT_BUCKET_SIZE = 1000;
+
+function getImageLayout() {
+	const raw = String(process.env.SOYSCRAPER_IMAGE_LAYOUT || 'bucket').toLowerCase();
+	if (raw === 'flat') return 'flat';
+	if (raw === 'bucket' || raw === 'range') return 'bucket';
+	return 'bucket';
+}
+
+function getBucketSize() {
+	const raw = process.env.SOYSCRAPER_IMAGE_BUCKET_SIZE;
+	if (!raw) return DEFAULT_BUCKET_SIZE;
+	const parsed = Number.parseInt(raw, 10);
+	if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_BUCKET_SIZE;
+	return parsed;
+}
+
+function resolvePostDir(rootDir, postNumber) {
+	if (!rootDir) return rootDir;
+	if (getImageLayout() === 'flat') return rootDir;
+	const parsed = Number.parseInt(String(postNumber), 10);
+	if (!Number.isFinite(parsed)) return rootDir;
+	const bucketSize = getBucketSize();
+	const start = Math.floor(parsed / bucketSize) * bucketSize;
+	const end = start + bucketSize - 1;
+	const padWidth = Math.max(String(end).length, 6);
+	const label = `${String(start).padStart(padWidth, '0')}-${String(end).padStart(padWidth, '0')}`;
+	return path.join(rootDir, label);
+}
 
 async function extractImageUrls(page, referer) {
 	const src = await page.$eval('div.image-list > a:first-child img#main_image', (img) => img.getAttribute('src'))
@@ -305,7 +334,8 @@ async function downloadFromUrl(url, page, options = {}) {
 		throw new Error('A Puppeteer page must be provided');
 	}
 	const postNumber = new URL(url).pathname.split('/').filter(Boolean).pop() || '';
-	ensureDownloadDir(dir);
+	const targetDir = resolvePostDir(dir, postNumber);
+	ensureDownloadDir(targetDir);
 	console.log("Navigating to", url);
 	try {
 		await page.goto(url, { waitUntil: 'networkidle2', timeout: options.timeout ?? 30000 });
@@ -322,7 +352,7 @@ async function downloadFromUrl(url, page, options = {}) {
 			return { ok: false, reason: 'no-images' };
 		}
 		const headers = await buildRequestHeaders(page, url);
-		const result = await downloadImages(imageUrls, { dir, postNumber, tagData, headers });
+		const result = await downloadImages(imageUrls, { dir: targetDir, postNumber, tagData, headers });
 		if (result.saved === 0 && result.skipped === 0 && result.failed > 0) {
 			throw new Error('All image downloads failed');
 		}

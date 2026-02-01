@@ -79,6 +79,10 @@ function normalizeQueryValue(queryValue) {
   );
 }
 
+function isBucketDir(value) {
+  return /^\d{3,}-\d{3,}$/.test(String(value || ''));
+}
+
 function encodePathSegments(relPath) {
   return relPath
     .split(path.sep)
@@ -230,7 +234,7 @@ function parseMetadata(relPath, tagIndex) {
 
     const relSegments = relPath.split(path.sep);
     const variantDir = relSegments.length > 1 ? relSegments[0] : '';
-    if (variantDir && variantDir !== 'multiple') {
+    if (variantDir && variantDir !== 'multiple' && !isBucketDir(variantDir)) {
       const normalizedVariantDir = normalizeText(variantDir);
       const knownVariants = new Set(variants.map((v) => normalizeText(v)));
       if (!knownVariants.has(normalizedVariantDir)) variants.push(variantDir);

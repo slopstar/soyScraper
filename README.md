@@ -50,6 +50,8 @@ npm run webui
 Environment variables:
 
 - `SOYSCRAPER_DOWNLOAD_DIR`: override where images are stored (default: `data/downloadedImages`)
+- `SOYSCRAPER_IMAGE_LAYOUT`: image folder layout (`bucket` default, or `flat`)
+- `SOYSCRAPER_IMAGE_BUCKET_SIZE`: bucket size when layout is `bucket` (default: `1000`)
 - `SOYSCRAPER_METADATA_DB`: override where metadata is stored (default: `data/metadata.sqlite`)
 - `PORT`: web UI port (default: `3000`)
 
@@ -57,3 +59,4 @@ Environment variables:
 ## Notes
 
 The web UI indexes filenames and folder names to enable quick searches by `tag:`, `variant:`, or `post:`.
+Images are bucketed into subfolders by post number (e.g., `data/downloadedImages/000000-000999`) unless you set `SOYSCRAPER_IMAGE_LAYOUT=flat`.

@@ -3,6 +3,7 @@ const path = require('path');
 const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 const { ensureDownloadDir } = require('../fs/localFileManager');
+const { TAGS_DIR } = require('../config');
 
 async function extractImageUrls(page, referer) {
 	const src = await page.$eval('div.image-list > a:first-child img#main_image', (img) => img.getAttribute('src'))
@@ -29,14 +30,64 @@ function getExtension(imageUrl) {
 	return ext || '.jpg';
 }
 
-/** Format: postnumber v-variant1 v-variant2 tag_1 tag_2 tag_3.ext (spaces between parts, underscore only within a part) */
+function normalizeTag(value) {
+	return String(value || '')
+		.toLowerCase()
+		.replace(/_/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim();
+}
+
+function findBlockedTag(tags, blocklist) {
+	if (!Array.isArray(tags) || !blocklist || blocklist.size === 0) return null;
+	for (const tag of tags) {
+		const normalized = normalizeTag(tag);
+		if (blocklist.has(normalized)) return tag;
+	}
+	return null;
+}
+
+function shouldSkipByTagFilters(tagData, tagFilters) {
+	if (!tagFilters || (!tagFilters.skipNsfw && !tagFilters.skipNsfl)) return null;
+	if (!tagData || !Array.isArray(tagData.tags)) {
+		console.warn('Tag filters enabled but no tag data was found; continuing download.');
+		return null;
+	}
+
+	if (tagFilters.skipNsfw) {
+		const match = findBlockedTag(tagData.tags, tagFilters.nsfwBlocklist);
+		if (match) return { skip: true, category: 'NSFW', tag: match };
+	}
+	if (tagFilters.skipNsfl) {
+		const match = findBlockedTag(tagData.tags, tagFilters.nsflBlocklist);
+		if (match) return { skip: true, category: 'NSFL', tag: match };
+	}
+
+	return null;
+}
+
+/** Format: postnumber_soyjak.ext */
 function buildFilename(postNumber, variants, tags, imageUrl) {
 	const ext = getExtension(imageUrl);
 	const sanitize = (s) => (s != null && String(s).trim() !== '' ? String(s).trim().replace(/\s+/g, '_') : '');
-	const variantParts = (variants || []).map((v) => sanitize(v)).filter(Boolean).map((v) => 'v-' + v);
-	const tagParts = (tags || []).map(sanitize).filter(Boolean);
-	const parts = [sanitize(postNumber), ...variantParts, ...tagParts].filter(Boolean);
-	return (parts.length ? parts.join(' ') + ext : 'image' + ext);
+	const base = sanitize(postNumber) || 'image';
+	return `${base}_soyjak${ext}`;
+}
+
+async function savePostMetadata(postNumber, tagData, imageUrls, postUrl, savedFiles) {
+	if (!postNumber) return;
+	const payload = {
+		postNumber: String(postNumber),
+		variants: Array.isArray(tagData?.variants) ? tagData.variants : [],
+		tags: Array.isArray(tagData?.tags) ? tagData.tags : [],
+		postUrl: postUrl || '',
+		imageUrls: Array.isArray(imageUrls) ? imageUrls : [],
+		files: Array.isArray(savedFiles) ? savedFiles : [],
+		savedAt: new Date().toISOString(),
+	};
+	ensureDownloadDir(TAGS_DIR);
+	const filePath = path.join(TAGS_DIR, `${postNumber}.json`);
+	await fs.promises.writeFile(filePath, JSON.stringify(payload, null, 2), 'utf8');
 }
 
 async function buildRequestHeaders(page, referer) {
@@ -72,26 +123,28 @@ async function downloadImageToFile(imageUrl, filePath, headers) {
 async function downloadImages(imageUrls, downloadContext) {
 	const { dir, postNumber, tagData, headers } = downloadContext;
 	const variants = tagData?.variants ?? [];
-	const variantDir = variants.length > 1 ? 'multiple' : (variants[0] ?? '');
 	const tags = tagData?.tags ?? [];
-	const targetDir = path.join(dir, variantDir);
+	const targetDir = dir;
 	ensureDownloadDir(targetDir);
 	console.log(`Found ${imageUrls.length} valid image URLs.`);
 
 	let saved = 0;
 	let skipped = 0;
 	let failed = 0;
+	const savedFiles = [];
 	for (const imageUrl of imageUrls) {
 		const filename = buildFilename(postNumber, variants, tags, imageUrl);
 		const filePath = path.join(targetDir, filename);
 		if (fs.existsSync(filePath)) {
 			console.log(`Skipping existing: ${filename}`);
 			skipped += 1;
+			savedFiles.push(filename);
 			continue;
 		}
 		try {
 			await downloadImageToFile(imageUrl, filePath, headers);
 			saved += 1;
+			savedFiles.push(filename);
 			console.log(`Saved: ${filename}`);
 		} catch (err) {
 			failed += 1;
@@ -99,7 +152,7 @@ async function downloadImages(imageUrls, downloadContext) {
 		}
 	}
 
-	return { saved, skipped, failed };
+	return { saved, skipped, failed, savedFiles };
 }
 
 async function extractImageTags(page) {
@@ -131,17 +184,25 @@ async function downloadFromUrl(url, page, options = {}) {
 	console.log("Navigating to", url);
 	try {
 		await page.goto(url, { waitUntil: 'networkidle2', timeout: options.timeout ?? 30000 });
+		const tagData = await extractImageTags(page);
+		if (!tagData) console.warn(`No tag data for ${url}`);
+		const filterDecision = shouldSkipByTagFilters(tagData, options.tagFilters);
+		if (filterDecision?.skip) {
+			console.log(`Skipping post ${postNumber} due to ${filterDecision.category} tag: ${filterDecision.tag}`);
+			return { ok: false, skipped: true, reason: 'filtered' };
+		}
 		const imageUrls = await extractImageUrls(page, url);
 		if (!imageUrls.length) {
 			console.warn(`No image URLs found for ${url}`);
 			return { ok: false, reason: 'no-images' };
 		}
-		const tagData = await extractImageTags(page);
-		if (!tagData) console.warn(`No tag data for ${url}`);
 		const headers = await buildRequestHeaders(page, url);
 		const result = await downloadImages(imageUrls, { dir, postNumber, tagData, headers });
-		if (result.saved === 0 && result.failed > 0) {
+		if (result.saved === 0 && result.skipped === 0 && result.failed > 0) {
 			throw new Error('All image downloads failed');
+		}
+		if (result.saved > 0 || result.skipped > 0) {
+			await savePostMetadata(postNumber, tagData, imageUrls, url, result.savedFiles);
 		}
 		return { ok: result.saved > 0, ...result };
 	} catch (err) {

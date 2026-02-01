@@ -1,3 +1,4 @@
+const fs = require('fs');
 const path = require('path');
 const { downloadFromUrl } = require('./downloadImages.js');
 const { getMaxPost } = require('./maxPostChecker.js');
@@ -41,6 +42,12 @@ function parseArgs(argv) {
     else if (arg.startsWith('--max-posts=')) options.maxPosts = arg.split('=').slice(1).join('=');
     else if (arg === '--headless') options.headless = true;
     else if (arg === '--no-headless') options.headless = false;
+    else if (arg === '--skip-nsfw') options.skipNsfw = true;
+    else if (arg === '--skip-nsfl') options.skipNsfl = true;
+    else if (arg === '--nsfw-file') options.nsfwFile = argv[++i];
+    else if (arg.startsWith('--nsfw-file=')) options.nsfwFile = arg.split('=').slice(1).join('=');
+    else if (arg === '--nsfl-file') options.nsflFile = argv[++i];
+    else if (arg.startsWith('--nsfl-file=')) options.nsflFile = arg.split('=').slice(1).join('=');
   }
 
   if (options.start != null) options.start = parseInt(options.start, 10);
@@ -53,6 +60,48 @@ function parseArgs(argv) {
   if (options.maxPosts != null) options.maxPosts = parseInt(options.maxPosts, 10);
 
   return options;
+}
+
+function normalizeTag(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function loadTagBlocklist(filePath) {
+  if (!filePath || typeof filePath !== 'string') return new Set();
+  const resolved = path.resolve(filePath);
+  try {
+    const contents = fs.readFileSync(resolved, 'utf8');
+    const tags = contents
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('#') && !line.startsWith('//'))
+      .map(normalizeTag)
+      .filter(Boolean);
+    return new Set(tags);
+  } catch (err) {
+    console.warn(`Tag blocklist not found: ${filePath}`);
+    return new Set();
+  }
+}
+
+function buildTagFilters(options) {
+  const skipNsfw = Boolean(options.skipNsfw);
+  const skipNsfl = Boolean(options.skipNsfl);
+  const nsfwBlocklist = skipNsfw ? loadTagBlocklist(options.nsfwFile) : new Set();
+  const nsflBlocklist = skipNsfl ? loadTagBlocklist(options.nsflFile) : new Set();
+
+  if (skipNsfw && nsfwBlocklist.size === 0) {
+    console.warn('NSFW skip enabled but the tag list is empty.');
+  }
+  if (skipNsfl && nsflBlocklist.size === 0) {
+    console.warn('NSFL skip enabled but the tag list is empty.');
+  }
+
+  return { skipNsfw, skipNsfl, nsfwBlocklist, nsflBlocklist };
 }
 
 function printHelp() {
@@ -70,6 +119,10 @@ Options:
   --timeout <ms>      Navigation timeout per post (default: 30000)
   --headless          Run browser headless
   --no-headless       Run browser with UI
+  --skip-nsfw         Skip posts with tags listed in the NSFW blocklist
+  --nsfw-file <path>  Path to a newline-delimited NSFW tag list
+  --skip-nsfl         Skip posts with tags listed in the NSFL blocklist
+  --nsfl-file <path>  Path to a newline-delimited NSFL tag list
   -h, --help          Show this help text
 `);
 }
@@ -96,6 +149,7 @@ async function withRetries(task, options = {}) {
 async function runDownloader(options = {}) {
   const { start: optStart, end: optEnd } = options;
   const downloadDir = path.resolve(options.outDir || DOWNLOAD_DIR);
+  const tagFilters = buildTagFilters(options);
   const highestPost = getLastDownloadedPost(downloadDir);
   const defaultStart = highestPost != null ? highestPost + 1 : 1;
   const start = typeof optStart === 'number' && optStart > 0 ? optStart : defaultStart;
@@ -121,11 +175,14 @@ async function runDownloader(options = {}) {
     const urlPrefix = 'https://soybooru.com/post/view/';
     for (let i = start; i <= effectiveEnd; i++) {
       const postUrl = `${urlPrefix}${i}`;
-      await withRetries(() => downloadFromUrl(postUrl, page, { ...options, dir: downloadDir }), {
-        retries: options.retries,
-        retryDelayMs: options.retryDelayMs,
-        label: `post ${i}`,
-      });
+      await withRetries(
+        () => downloadFromUrl(postUrl, page, { ...options, dir: downloadDir, tagFilters }),
+        {
+          retries: options.retries,
+          retryDelayMs: options.retryDelayMs,
+          label: `post ${i}`,
+        }
+      );
       if (i < effectiveEnd) await randomSleep(normalizedDelayMin, normalizedDelayMax);
     }
   } finally {

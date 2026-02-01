@@ -4,7 +4,7 @@ const path = require('path');
 const url = require('url');
 const { spawn } = require('child_process');
 
-const { ROOT_DIR, DOWNLOAD_DIR } = require('../src/config.js');
+const { ROOT_DIR, DOWNLOAD_DIR, TAGS_DIR } = require('../src/config.js');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const PORT = Number(process.env.PORT || 3000);
 
@@ -60,6 +60,19 @@ function normalizeText(value) {
     .replace(/_/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function normalizeFilterValue(value) {
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, '_');
+}
+
+function normalizeQueryValue(queryValue) {
+  return String(queryValue || '').replace(
+    /\b(tag|t|variant|v)\s*:\s*"([^"]+)"/gi,
+    (match, key, value) => `${key.toLowerCase()}:${normalizeFilterValue(value)}`
+  );
 }
 
 function encodePathSegments(relPath) {
@@ -181,24 +194,58 @@ function walkImages(dir, baseDir, items) {
   }
 }
 
-function parseMetadata(relPath) {
+function loadTagMetadataMap() {
+  const map = new Map();
+  if (!fs.existsSync(TAGS_DIR)) return map;
+  const entries = fs.readdirSync(TAGS_DIR, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+    const filePath = path.join(TAGS_DIR, entry.name);
+    try {
+      const raw = fs.readFileSync(filePath, 'utf8');
+      const data = JSON.parse(raw);
+      const postNumber = data && data.postNumber ? String(data.postNumber) : entry.name.replace(/\.json$/i, '');
+      if (!postNumber) continue;
+      map.set(postNumber, data);
+    } catch (err) {
+      console.warn(`Failed to read metadata ${entry.name}: ${err.message}`);
+    }
+  }
+  return map;
+}
+
+function parseMetadata(relPath, tagIndex) {
   const ext = path.extname(relPath);
   const baseName = path.basename(relPath, ext);
-  const parts = baseName.split(' ').filter(Boolean);
-  const postNumber = parts[0] || '';
-  const variantParts = parts.filter((part) => part.startsWith('v-'));
-  const tagParts = parts.filter((part, idx) => idx !== 0 && !part.startsWith('v-'));
+  const postMatch = baseName.match(/^(\d+)/);
+  const postNumber = postMatch ? postMatch[1] : '';
+  let variants = [];
+  let tags = [];
+  let metaUrl = '';
 
-  const variants = variantParts.map((part) => part.slice(2));
-  const tags = tagParts;
+  const tagMeta = postNumber && tagIndex ? tagIndex.get(postNumber) : null;
+  if (tagMeta) {
+    variants = Array.isArray(tagMeta.variants) ? tagMeta.variants : [];
+    tags = Array.isArray(tagMeta.tags) ? tagMeta.tags : [];
+    metaUrl = tagMeta.postUrl || (Array.isArray(tagMeta.imageUrls) ? tagMeta.imageUrls[0] : '') || '';
+  } else {
+    const parts = baseName.split(' ').filter(Boolean);
+    const variantParts = parts.filter((part) => part.startsWith('v-'));
+    const tagParts = parts.filter((part, idx) => idx !== 0 && !part.startsWith('v-'));
+    variants = variantParts.map((part) => part.slice(2));
+    tags = tagParts;
 
-  const relSegments = relPath.split(path.sep);
-  const variantDir = relSegments.length > 1 ? relSegments[0] : '';
-  if (variantDir && variantDir !== 'multiple') {
-    const normalizedVariantDir = normalizeText(variantDir);
-    const knownVariants = new Set(variants.map((v) => normalizeText(v)));
-    if (!knownVariants.has(normalizedVariantDir)) variants.push(variantDir);
+    const relSegments = relPath.split(path.sep);
+    const variantDir = relSegments.length > 1 ? relSegments[0] : '';
+    if (variantDir && variantDir !== 'multiple') {
+      const normalizedVariantDir = normalizeText(variantDir);
+      const knownVariants = new Set(variants.map((v) => normalizeText(v)));
+      if (!knownVariants.has(normalizedVariantDir)) variants.push(variantDir);
+    }
   }
+
+  variants = variants.map(normalizeFilterValue).filter(Boolean);
+  tags = tags.map(normalizeFilterValue).filter(Boolean);
 
   const normalizedVariants = variants.map(normalizeText).filter(Boolean);
   const normalizedTags = tags.map(normalizeText).filter(Boolean);
@@ -216,6 +263,7 @@ function parseMetadata(relPath) {
     searchText,
     ext,
     baseName,
+    metaUrl,
   };
 }
 
@@ -255,9 +303,10 @@ function buildFacets(index) {
 function buildIndex() {
   const items = [];
   walkImages(DOWNLOAD_DIR, DOWNLOAD_DIR, items);
+  const tagIndex = loadTagMetadataMap();
 
   const index = items.map(({ relPath }) => {
-    const meta = parseMetadata(relPath);
+    const meta = parseMetadata(relPath, tagIndex);
     return {
       ...meta,
       urlPath: `/images/${encodePathSegments(relPath)}`,
@@ -277,7 +326,8 @@ function buildIndex() {
 }
 
 function parseQuery(queryValue) {
-  const tokens = (queryValue || '').match(/"[^"]+"|\S+/g) || [];
+  const normalizedQuery = normalizeQueryValue(queryValue);
+  const tokens = (normalizedQuery || '').match(/"[^"]+"|\S+/g) || [];
   const filters = { tags: [], variants: [], posts: [], general: [] };
 
   for (const raw of tokens) {

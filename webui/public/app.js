@@ -43,6 +43,12 @@ let indexPollInFlight = false;
 let autoRefreshTimer = null;
 let autoRefreshInFlight = false;
 let pendingIndexRefresh = false;
+let matchesRefreshTimer = null;
+let renderedMatchKeys = new Set();
+
+function getMatchKey(item) {
+  return item.urlPath || item.fileName || `${item.postNumber || ''}:${item.baseName || ''}`;
+}
 
 function escapeHtml(value) {
   return String(value)
@@ -223,10 +229,124 @@ function renderAutocomplete(variants, tags) {
   tags.forEach((item) => addOption(formatToken('tag', item.value)));
 }
 
-function renderResults(results) {
-  resultsEl.innerHTML = '';
+function buildResultCard(item, idx) {
+  const card = document.createElement('article');
+  card.className = 'card';
+  card.dataset.key = getMatchKey(item);
+  card.style.setProperty('--i', idx);
 
-  if (!results.length) {
+  const media = document.createElement('div');
+  media.className = 'card-media';
+
+  const img = document.createElement('img');
+  img.src = item.urlPath;
+  img.alt = item.fileName;
+  img.loading = 'lazy';
+  img.addEventListener('dblclick', (event) => {
+    event.preventDefault();
+    window.open(item.urlPath, '_blank', 'noopener');
+  });
+
+  const formatList = (list) => list.map((value) => String(value).replace(/_/g, ' ')).join(', ');
+  const variants = item.variants && item.variants.length ? formatList(item.variants) : '—';
+  const tags = item.tags && item.tags.length ? formatList(item.tags) : '—';
+
+  const overlay = document.createElement('div');
+  overlay.className = 'card-overlay';
+
+  const overlayTop = document.createElement('div');
+  overlayTop.className = 'card-overlay-top';
+
+  const openFull = document.createElement('a');
+  openFull.className = 'open-full';
+  openFull.href = item.urlPath;
+  openFull.target = '_blank';
+  openFull.rel = 'noopener';
+  openFull.setAttribute('aria-label', 'Open full image in new tab');
+  openFull.title = 'Open full image in new tab';
+  openFull.textContent = '↗';
+  overlayTop.appendChild(openFull);
+
+  const info = document.createElement('div');
+  info.className = 'card-info';
+
+  const addInfoLine = (label, valueNode) => {
+    const line = document.createElement('div');
+    line.className = 'info-line';
+    const labelEl = document.createElement('span');
+    labelEl.className = 'info-label';
+    labelEl.textContent = label;
+    const valueEl = valueNode || document.createElement('span');
+    valueEl.classList.add('info-value');
+    line.appendChild(labelEl);
+    line.appendChild(valueEl);
+    info.appendChild(line);
+  };
+
+  const postValue = document.createElement('span');
+  postValue.textContent = item.postNumber ? String(item.postNumber) : '—';
+  addInfoLine('Post', postValue);
+
+  const variantValue = document.createElement('span');
+  variantValue.textContent = variants;
+  addInfoLine('Variants', variantValue);
+
+  const tagValue = document.createElement('span');
+  tagValue.textContent = tags;
+  addInfoLine('Tags', tagValue);
+
+  if (item.metaUrl) {
+    const link = document.createElement('a');
+    link.href = item.metaUrl;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.className = 'info-link';
+    link.textContent = item.metaUrl;
+    addInfoLine('URL', link);
+  } else {
+    const urlValue = document.createElement('span');
+    urlValue.textContent = '—';
+    addInfoLine('URL', urlValue);
+  }
+
+  overlay.appendChild(overlayTop);
+  overlay.appendChild(info);
+
+  media.appendChild(img);
+  media.appendChild(overlay);
+
+  card.appendChild(media);
+  return card;
+}
+
+function renderResults(results, mode = 'full') {
+  const sorted = results.slice().sort(compareByPostNumberDesc);
+
+  if (mode === 'incremental' && currentPage === 1) {
+    const newItems = sorted.filter((item) => !renderedMatchKeys.has(getMatchKey(item)));
+    if (!newItems.length) return;
+    resultsEl.querySelector('.empty')?.remove();
+    const fragment = document.createDocumentFragment();
+    newItems.forEach((item, idx) => {
+      const key = getMatchKey(item);
+      renderedMatchKeys.add(key);
+      fragment.appendChild(buildResultCard(item, idx));
+    });
+    resultsEl.insertBefore(fragment, resultsEl.firstChild);
+    while (resultsEl.children.length > currentPageSize) {
+      const last = resultsEl.lastElementChild;
+      if (!last) break;
+      const key = last.dataset?.key;
+      if (key) renderedMatchKeys.delete(key);
+      resultsEl.removeChild(last);
+    }
+    return;
+  }
+
+  resultsEl.innerHTML = '';
+  renderedMatchKeys = new Set();
+
+  if (!sorted.length) {
     const empty = document.createElement('div');
     empty.className = 'empty';
     empty.textContent = 'No matches yet. Try a different query.';
@@ -234,95 +354,9 @@ function renderResults(results) {
     return;
   }
 
-  const sorted = results.slice().sort(compareByPostNumberDesc);
   sorted.forEach((item, idx) => {
-    const card = document.createElement('article');
-    card.className = 'card';
-    card.style.setProperty('--i', idx);
-
-    const media = document.createElement('div');
-    media.className = 'card-media';
-
-    const img = document.createElement('img');
-    img.src = item.urlPath;
-    img.alt = item.fileName;
-    img.loading = 'lazy';
-    img.addEventListener('dblclick', (event) => {
-      event.preventDefault();
-      window.open(item.urlPath, '_blank', 'noopener');
-    });
-
-    const formatList = (list) =>
-      list.map((value) => String(value).replace(/_/g, ' ')).join(', ');
-    const variants = item.variants && item.variants.length ? formatList(item.variants) : '—';
-    const tags = item.tags && item.tags.length ? formatList(item.tags) : '—';
-
-    const overlay = document.createElement('div');
-    overlay.className = 'card-overlay';
-
-    const overlayTop = document.createElement('div');
-    overlayTop.className = 'card-overlay-top';
-
-    const openFull = document.createElement('a');
-    openFull.className = 'open-full';
-    openFull.href = item.urlPath;
-    openFull.target = '_blank';
-    openFull.rel = 'noopener';
-    openFull.setAttribute('aria-label', 'Open full image in new tab');
-    openFull.title = 'Open full image in new tab';
-    openFull.textContent = '↗';
-    overlayTop.appendChild(openFull);
-
-    const info = document.createElement('div');
-    info.className = 'card-info';
-
-    const addInfoLine = (label, valueNode) => {
-      const line = document.createElement('div');
-      line.className = 'info-line';
-      const labelEl = document.createElement('span');
-      labelEl.className = 'info-label';
-      labelEl.textContent = label;
-      const valueEl = valueNode || document.createElement('span');
-      valueEl.classList.add('info-value');
-      line.appendChild(labelEl);
-      line.appendChild(valueEl);
-      info.appendChild(line);
-    };
-
-    const postValue = document.createElement('span');
-    postValue.textContent = item.postNumber ? String(item.postNumber) : '—';
-    addInfoLine('Post', postValue);
-
-    const variantValue = document.createElement('span');
-    variantValue.textContent = variants;
-    addInfoLine('Variants', variantValue);
-
-    const tagValue = document.createElement('span');
-    tagValue.textContent = tags;
-    addInfoLine('Tags', tagValue);
-
-    if (item.metaUrl) {
-      const link = document.createElement('a');
-      link.href = item.metaUrl;
-      link.target = '_blank';
-      link.rel = 'noopener';
-      link.className = 'info-link';
-      link.textContent = item.metaUrl;
-      addInfoLine('URL', link);
-    } else {
-      const urlValue = document.createElement('span');
-      urlValue.textContent = '—';
-      addInfoLine('URL', urlValue);
-    }
-
-    overlay.appendChild(overlayTop);
-    overlay.appendChild(info);
-
-    media.appendChild(img);
-    media.appendChild(overlay);
-
-    card.appendChild(media);
-    resultsEl.appendChild(card);
+    renderedMatchKeys.add(getMatchKey(item));
+    resultsEl.appendChild(buildResultCard(item, idx));
   });
 }
 
@@ -402,7 +436,7 @@ async function loadFacets({ refresh = false } = {}) {
   }
 }
 
-async function runSearch({ refresh = false, page = currentPage } = {}) {
+async function runSearch({ refresh = false, page = currentPage, mode = 'full' } = {}) {
   const query = searchInput.value.trim();
   currentPage = page;
 
@@ -421,7 +455,7 @@ async function runSearch({ refresh = false, page = currentPage } = {}) {
       throw new Error(data.error || 'Search failed');
     }
 
-    renderResults(data.results || []);
+    renderResults(data.results || [], mode);
 
     totalPages = data.totalPages || 1;
     currentPage = data.page || 1;
@@ -494,6 +528,7 @@ async function startDownload() {
     if (!response.ok || !data.ok) throw new Error(data.error || 'Start failed');
     renderDownloadStatus(data.status);
     scheduleDownloadPoll(1000);
+    scheduleMatchesRefresh(1000);
   } catch (err) {
     downloadStatusEl.textContent = err.message;
   }
@@ -590,6 +625,24 @@ function scheduleDownloadPoll(delay) {
   downloadPollTimer = setTimeout(pollDownloadStatus, delay);
 }
 
+function scheduleMatchesRefresh(delay) {
+  if (matchesRefreshTimer) clearTimeout(matchesRefreshTimer);
+  matchesRefreshTimer = setTimeout(refreshMatches, delay);
+}
+
+function getMatchesRefreshDelay() {
+  return document.hidden ? 30000 : 10000;
+}
+
+async function refreshMatches() {
+  try {
+    if (!lastDownloadStatus?.running) return;
+    await runSearch({ page: currentPage, mode: 'incremental' });
+  } finally {
+    scheduleMatchesRefresh(getMatchesRefreshDelay());
+  }
+}
+
 async function pollDownloadStatus() {
   if (downloadPollInFlight) return;
   downloadPollInFlight = true;
@@ -646,8 +699,10 @@ pollDownloadStatus();
 if (!startIndexStream()) {
   scheduleIndexPoll(2000);
 }
+scheduleMatchesRefresh(2000);
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) pollDownloadStatus();
   if (!document.hidden && !indexEventSource) scheduleIndexPoll(2000);
+  if (!document.hidden) scheduleMatchesRefresh(1000);
 });

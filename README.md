@@ -10,6 +10,7 @@ SoyScraper downloads images from soybooru and provides a lightweight local web U
 - `scripts/` one-off scripts (e.g., single-post test)
 - `webui/` local browser UI + API
 - `data/` downloaded content (ignored by git)
+  - `data/metadata.sqlite` stores post metadata (tags, variants, stats)
 
 ## Usage
 
@@ -49,7 +50,9 @@ npm run webui
 Environment variables:
 
 - `SOYSCRAPER_DOWNLOAD_DIR`: override where images are stored (default: `data/downloadedImages`)
+- `SOYSCRAPER_METADATA_DB`: override where metadata is stored (default: `data/metadata.sqlite`)
 - `PORT`: web UI port (default: `3000`)
+
 
 ## Notes
 

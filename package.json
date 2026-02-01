@@ -13,6 +13,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "better-sqlite3": "^11.3.0",
     "puppeteer": "^24.34.0"
   }
 }

@@ -3,7 +3,8 @@ const path = require('path');
 const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 const { ensureDownloadDir } = require('../fs/localFileManager');
-const { TAGS_DIR } = require('../config');
+const { METADATA_DB } = require('../config');
+const { upsertMetadata } = require('../db/metadataStore');
 
 async function extractImageUrls(page, referer) {
 	const src = await page.$eval('div.image-list > a:first-child img#main_image', (img) => img.getAttribute('src'))
@@ -109,9 +110,7 @@ async function savePostMetadata(postNumber, tagData, imageUrls, postUrl, savedFi
 		files: Array.isArray(savedFiles) ? savedFiles : [],
 		savedAt: new Date().toISOString(),
 	};
-	ensureDownloadDir(TAGS_DIR);
-	const filePath = path.join(TAGS_DIR, `${postNumber}.json`);
-	await fs.promises.writeFile(filePath, JSON.stringify(payload, null, 2), 'utf8');
+	upsertMetadata(METADATA_DB, postNumber, payload);
 }
 
 async function buildRequestHeaders(page, referer) {

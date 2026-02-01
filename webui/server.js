@@ -4,7 +4,8 @@ const path = require('path');
 const url = require('url');
 const { spawn } = require('child_process');
 
-const { ROOT_DIR, DOWNLOAD_DIR, TAGS_DIR } = require('../src/config.js');
+const { ROOT_DIR, DOWNLOAD_DIR, METADATA_DB } = require('../src/config.js');
+const { loadMetadataMap } = require('../src/db/metadataStore');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const PORT = Number(process.env.PORT || 3000);
 
@@ -198,23 +199,12 @@ function walkImages(dir, baseDir, items) {
 }
 
 function loadTagMetadataMap() {
-  const map = new Map();
-  if (!fs.existsSync(TAGS_DIR)) return map;
-  const entries = fs.readdirSync(TAGS_DIR, { withFileTypes: true });
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
-    const filePath = path.join(TAGS_DIR, entry.name);
-    try {
-      const raw = fs.readFileSync(filePath, 'utf8');
-      const data = JSON.parse(raw);
-      const postNumber = data && data.postNumber ? String(data.postNumber) : entry.name.replace(/\.json$/i, '');
-      if (!postNumber) continue;
-      map.set(postNumber, data);
-    } catch (err) {
-      console.warn(`Failed to read metadata ${entry.name}: ${err.message}`);
-    }
+  try {
+    return loadMetadataMap(METADATA_DB);
+  } catch (err) {
+    console.warn(`Failed to read metadata database: ${err.message}`);
+    return new Map();
   }
-  return map;
 }
 
 function parseMetadata(relPath, tagIndex) {
@@ -408,6 +398,26 @@ function watchDirectoryTree(rootDir) {
         stack.push(path.join(current, entry.name));
       }
     }
+  }
+}
+
+function watchMetadataDb(dbPath) {
+  if (!dbPath) return;
+  const dir = path.dirname(dbPath);
+  const base = path.basename(dbPath);
+  if (!fs.existsSync(dir)) return;
+  const watched = new Set([base, `${base}-wal`, `${base}-shm`]);
+  try {
+    const watcher = fs.watch(dir, { persistent: true }, (eventType, filename) => {
+      if (!filename) return;
+      if (!watched.has(filename)) return;
+      scheduleIndexRebuild(`metadata ${eventType}`);
+    });
+    watcher.on('error', (err) => {
+      console.warn(`Watcher error on ${dir}: ${err.message}`);
+    });
+  } catch (err) {
+    console.warn(`Failed to watch metadata db: ${err.message}`);
   }
 }
 
@@ -706,7 +716,7 @@ server.listen(PORT, () => {
   buildIndex();
   broadcastIndexUpdate('startup');
   watchDirectoryTree(DOWNLOAD_DIR);
-  watchDirectoryTree(TAGS_DIR);
+  watchMetadataDb(METADATA_DB);
   console.log(`SoyScraper Web UI running at http://localhost:${PORT}`);
   console.log(`Using downloads from: ${DOWNLOAD_DIR}`);
 });

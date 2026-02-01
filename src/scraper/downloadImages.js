@@ -38,6 +38,30 @@ function normalizeTag(value) {
 		.trim();
 }
 
+function normalizeTagData(tagData) {
+	const normalized = {};
+	const allowedStringKeys = new Set([
+		'postedAt',
+		'size',
+		'filesize',
+		'type',
+		'rating',
+	]);
+	if (tagData && typeof tagData === 'object') {
+		for (const [key, value] of Object.entries(tagData)) {
+			if (Array.isArray(value)) {
+				normalized[key] = value;
+			} else if (allowedStringKeys.has(key) && value != null) {
+				const asString = String(value).trim();
+				if (asString) normalized[key] = asString;
+			}
+		}
+	}
+	if (!Array.isArray(normalized.variants)) normalized.variants = [];
+	if (!Array.isArray(normalized.tags)) normalized.tags = [];
+	return normalized;
+}
+
 function findBlockedTag(tags, blocklist) {
 	if (!Array.isArray(tags) || !blocklist || blocklist.size === 0) return null;
 	for (const tag of tags) {
@@ -76,10 +100,10 @@ function buildFilename(postNumber, variants, tags, imageUrl) {
 
 async function savePostMetadata(postNumber, tagData, imageUrls, postUrl, savedFiles) {
 	if (!postNumber) return;
+	const normalizedTagData = normalizeTagData(tagData);
 	const payload = {
 		postNumber: String(postNumber),
-		variants: Array.isArray(tagData?.variants) ? tagData.variants : [],
-		tags: Array.isArray(tagData?.tags) ? tagData.tags : [],
+		...normalizedTagData,
 		postUrl: postUrl || '',
 		imageUrls: Array.isArray(imageUrls) ? imageUrls : [],
 		files: Array.isArray(savedFiles) ? savedFiles : [],
@@ -156,19 +180,121 @@ async function downloadImages(imageUrls, downloadContext) {
 }
 
 async function extractImageTags(page) {
-    try {
-        // Single variant: #Variantleft. Multiple: #Variantsleft (one link per row).
-        const variantSelector = '#Variantleft > div:nth-child(2) > table:nth-child(1) > tbody:nth-child(3) tr td:nth-child(2) a, #Variantsleft > div:nth-child(2) > table:nth-child(1) > tbody:nth-child(3) tr td:nth-child(2) a';
-        const variants = await page.$$eval(variantSelector, (elements) =>
-            elements.map((el) => (el.textContent || '').trim()).filter(Boolean));
+	try {
+		const ignoredSectionIds = [
+			'Post_Controlsleft',
+			'Report_Postleft',
+			'Navigationleft',
+			'Advertisementleft',
+			'Statisticsleft',
+		];
+		const tagData = await page.$$eval(
+			'body nav section',
+			(sections, ignoredIds) => {
+				const ignored = new Set((ignoredIds || []).map((id) => String(id).toLowerCase()));
+				const isIgnoredSection = (id, heading) => {
+					const idText = (id || '').toLowerCase();
+					const headingText = (heading || '').toLowerCase();
+					if (idText && ignored.has(idText)) return true;
+					if (headingText.includes('favorited')) return true;
+					return false;
+				};
+				const normalizeKey = (raw) => {
+					if (!raw) return '';
+					const cleaned = String(raw)
+						.replace(/left$/i, '')
+						.replace(/_/g, ' ')
+						.trim()
+						.toLowerCase();
+					if (!cleaned) return '';
+					const mapping = {
+						variant: 'variants',
+						variants: 'variants',
+						subvariant: 'subvariants',
+						subvariants: 'subvariants',
+						tag: 'tags',
+						tags: 'tags',
+						flag: 'flags',
+						flags: 'flags',
+						meta: 'meta',
+						metas: 'meta',
+					};
+					return mapping[cleaned] || cleaned.replace(/\s+/g, '_');
+				};
+				const collectTags = (section) => {
+					const tagNodes = section.querySelectorAll('.tag_name');
+					const nodes = tagNodes.length ? tagNodes : section.querySelectorAll('tbody a, a');
+					return Array.from(nodes)
+						.map((node) => (node.textContent || '').trim())
+						.filter(Boolean);
+				};
+				const data = {};
+				for (const section of sections) {
+					const id = (section.getAttribute('id') || '').trim();
+					const heading = section.querySelector('h4, h3, h2, h1')?.textContent?.trim() || '';
+					if (isIgnoredSection(id, heading)) continue;
+					const key = normalizeKey(id || heading);
+					if (!key) continue;
+					const tags = collectTags(section);
+					if (tags.length === 0) continue;
+					if (!data[key]) data[key] = [];
+					for (const tag of tags) {
+						if (!data[key].includes(tag)) data[key].push(tag);
+					}
+				}
+				return Object.keys(data).length ? data : null;
+			},
+			ignoredSectionIds
+		);
 
-        const tags = await page.$$eval('#Tagsleft > div:nth-child(2) > table:nth-child(1) > tbody:nth-child(3) .tag_name', (els) =>
+		const statisticsData = await page
+			.$eval('body nav section#Statisticsleft', (section) => {
+				const timeEl = section.querySelector('div.navside.tab time, time');
+				const postedAt = timeEl
+					? (timeEl.getAttribute('datetime') || timeEl.textContent || '').trim()
+					: '';
+				const text = (section.textContent || '').replace(/\s+/g, ' ').trim();
+				const extractValue = (label) => {
+					const match = text.match(new RegExp(`${label}\\s*:\\s*([^\\n\\r]+)`, 'i'));
+					return match ? match[1].trim() : '';
+				};
+				const size = extractValue('Size');
+				const filesize = extractValue('Filesize');
+				const type = extractValue('Type');
+				const rating = extractValue('Rating');
+				return {
+					postedAt,
+					size,
+					filesize,
+					type,
+					rating,
+				};
+			})
+			.catch(() => null);
+
+		const mergedTagData = {
+			...(tagData || {}),
+			...(statisticsData || {}),
+		};
+
+		if (tagData || statisticsData) {
+			return normalizeTagData(mergedTagData);
+		}
+
+		// Fallback to legacy selectors if nav parsing yields no data.
+		const variantSelector = '#Variantleft > div:nth-child(2) > table:nth-child(1) > tbody:nth-child(3) tr td:nth-child(2) a, #Variantsleft > div:nth-child(2) > table:nth-child(1) > tbody:nth-child(3) tr td:nth-child(2) a';
+		const variants = await page.$$eval(variantSelector, (elements) =>
+			elements.map((el) => (el.textContent || '').trim()).filter(Boolean));
+
+		const tags = await page.$$eval('#Tagsleft > div:nth-child(2) > table:nth-child(1) > tbody:nth-child(3) .tag_name', (els) =>
 			els.map((el) => (el.textContent || '').trim()).filter(Boolean));
-        return { variants, tags };
-    } catch (err) {
-        console.warn(`extractImageTags: ${err.message}`);
-        return null;
-    }
+		const normalizedLegacy = normalizeTagData({ variants, tags });
+		const hasLegacyData = Object.values(normalizedLegacy).some((value) => Array.isArray(value) && value.length > 0);
+		return hasLegacyData ? normalizedLegacy : null;
+	} catch (err) {
+		console.warn(`extractImageTags: ${err.message}`);
+		return null;
+	}
 }
 
 async function downloadFromUrl(url, page, options = {}) {

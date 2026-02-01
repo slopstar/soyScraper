@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SoyScraper Browser</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="bg"></div>
+    <main class="page">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">SoyScraper</p>
+          <h1>Downloaded Image Browser</h1>
+          <p class="subhead">
+            Search across variants and tags. Try <span class="mono">variant:foo</span> or
+            <span class="mono">tag:bar</span>.
+          </p>
+        </div>
+        <div class="meta">
+          <div class="stat" id="indexStat">Indexed: —</div>
+          <div class="stat" id="updateStat">Updated: —</div>
+        </div>
+      </header>
+
+      <section class="controls">
+        <label class="search">
+          <span class="sr-only">Search</span>
+          <input id="searchInput" type="text" list="autocompleteList" placeholder="Search tags, variants, or post id" />
+        </label>
+        <button id="searchButton" class="primary">Search</button>
+        <button id="clearFiltersButton" class="ghost">Clear Filters</button>
+        <button id="rescanButton" class="ghost">Rescan</button>
+      </section>
+
+      <datalist id="autocompleteList"></datalist>
+
+      <section class="filters">
+        <div class="filter-group">
+          <h2>Quick Variants</h2>
+          <div class="chips" id="variantChips"></div>
+        </div>
+        <div class="filter-group">
+          <h2>Quick Tags</h2>
+          <div class="chips" id="tagChips"></div>
+        </div>
+      </section>
+
+      <section class="status" id="status">Ready.</section>
+
+      <section class="download-panel">
+        <div>
+          <h2>Downloader</h2>
+          <p class="meta-line">Kick off a full run and keep an eye on recent output.</p>
+        </div>
+        <div class="download-controls">
+          <button id="startDownload" class="primary">Start Big Download</button>
+          <button id="stopDownload" class="ghost">Stop</button>
+          <button id="refreshDownload" class="ghost">Refresh Status</button>
+        </div>
+        <div class="download-status" id="downloadStatus">Idle.</div>
+        <pre class="download-log" id="downloadLog"></pre>
+      </section>
+
+      <section class="results" id="results"></section>
+
+      <section class="pagination">
+        <div class="pager">
+          <button id="prevPage" class="ghost">Prev</button>
+          <span id="pageInfo">Page 1 of 1</span>
+          <button id="nextPage" class="ghost">Next</button>
+        </div>
+        <label class="page-size">
+          <span>Per page</span>
+          <select id="pageSize">
+            <option value="24">24</option>
+            <option value="48" selected>48</option>
+            <option value="96">96</option>
+            <option value="200">200</option>
+          </select>
+        </label>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

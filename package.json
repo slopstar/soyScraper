@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/cli.js",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "single-post-test": "node scripts/singlePostTest.js"
+    "single-post-test": "node scripts/singlePostTest.js",
+    "webui": "node webui/server.js"
   },
   "keywords": [],
   "author": "",

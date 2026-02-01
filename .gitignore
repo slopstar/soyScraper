@@ -5,6 +5,7 @@ yarn-debug.log*
 yarn-error.log*
 
 # Downloaded content
+data/
 downloadedImages/
 
 # Environment variables

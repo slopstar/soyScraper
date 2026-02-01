@@ -45,6 +45,9 @@ let downloadState = {
 };
 const downloadLog = [];
 const MAX_LOG_LINES = 200;
+const RESCAN_DEBOUNCE_MS = 1500;
+const SSE_HEARTBEAT_MS = 30000;
+const sseClients = new Set();
 
 function safeJoin(baseDir, targetPath) {
   const normalized = path.normalize(targetPath).replace(/^([/\\])+/, '');
@@ -314,6 +317,7 @@ function buildIndex() {
     };
   });
 
+  index.sort(compareByPostNumberDesc);
   indexCache = index;
   const facets = buildFacets(index);
   indexMeta = {
@@ -323,6 +327,109 @@ function buildIndex() {
   };
 
   return indexCache;
+}
+
+function parsePostNumberValue(value, fallbackText) {
+  const raw = String(value || '').trim();
+  if (raw) {
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  const fallback = String(fallbackText || '');
+  const match = fallback.match(/(\d+)/);
+  if (!match) return null;
+  const parsed = Number.parseInt(match[1], 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function compareByPostNumberDesc(a, b) {
+  const aNum = parsePostNumberValue(a.postNumber, a.baseName);
+  const bNum = parsePostNumberValue(b.postNumber, b.baseName);
+  if (aNum === null && bNum === null) return a.baseName.localeCompare(b.baseName);
+  if (aNum === null) return 1;
+  if (bNum === null) return -1;
+  if (aNum !== bNum) return bNum - aNum;
+  return a.baseName.localeCompare(b.baseName);
+}
+
+let indexRebuildTimer = null;
+const activeWatchers = new Map();
+
+function scheduleIndexRebuild(reason) {
+  if (indexRebuildTimer) return;
+  indexRebuildTimer = setTimeout(() => {
+    indexRebuildTimer = null;
+    buildIndex();
+    broadcastIndexUpdate(reason || 'watch');
+    if (reason) {
+      console.log(`Index rebuilt (${reason}) at ${new Date().toLocaleTimeString()}`);
+    }
+  }, RESCAN_DEBOUNCE_MS);
+}
+
+function addDirectoryWatcher(dir) {
+  if (activeWatchers.has(dir)) return;
+  try {
+    const watcher = fs.watch(dir, { persistent: true }, (eventType, filename) => {
+      scheduleIndexRebuild(`fs.watch ${eventType}`);
+      if (!filename) return;
+      const nextPath = path.join(dir, filename);
+      try {
+        const stats = fs.statSync(nextPath);
+        if (stats.isDirectory()) addDirectoryWatcher(nextPath);
+      } catch (err) {
+        // Ignore transient paths that disappear quickly.
+      }
+    });
+    watcher.on('error', (err) => {
+      activeWatchers.delete(dir);
+      console.warn(`Watcher error on ${dir}: ${err.message}`);
+    });
+    activeWatchers.set(dir, watcher);
+  } catch (err) {
+    console.warn(`Failed to watch ${dir}: ${err.message}`);
+  }
+}
+
+function watchDirectoryTree(rootDir) {
+  if (!fs.existsSync(rootDir)) return;
+  const stack = [rootDir];
+  while (stack.length) {
+    const current = stack.pop();
+    addDirectoryWatcher(current);
+    let entries = [];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch (err) {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        stack.push(path.join(current, entry.name));
+      }
+    }
+  }
+}
+
+function sendSse(res, event, data) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(data)}\n\n`);
+}
+
+function broadcastIndexUpdate(reason) {
+  if (!indexMeta.lastIndexedAt) return;
+  const payload = {
+    indexedAt: indexMeta.lastIndexedAt,
+    indexedTotal: indexMeta.indexedTotal,
+    reason: reason || 'update',
+  };
+  for (const res of sseClients) {
+    try {
+      sendSse(res, 'index', payload);
+    } catch (err) {
+      sseClients.delete(res);
+    }
+  }
 }
 
 function parseQuery(queryValue) {
@@ -385,7 +492,10 @@ function matchesFilters(item, filters) {
 
 function handleSearch(req, res, query) {
   const refresh = query.refresh === '1' || query.refresh === 'true';
-  if (refresh || !indexMeta.lastIndexedAt) buildIndex();
+  if (refresh || !indexMeta.lastIndexedAt) {
+    buildIndex();
+    broadcastIndexUpdate(refresh ? 'refresh' : 'startup');
+  }
 
   const q = query.q || '';
   const filters = parseQuery(q);
@@ -422,7 +532,10 @@ function handleSearch(req, res, query) {
 
 function handleFacets(req, res, query) {
   const refresh = query.refresh === '1' || query.refresh === 'true';
-  if (refresh || !indexMeta.lastIndexedAt) buildIndex();
+  if (refresh || !indexMeta.lastIndexedAt) {
+    buildIndex();
+    broadcastIndexUpdate(refresh ? 'refresh' : 'startup');
+  }
   const limitRaw = parseInt(query.limit || '24', 10);
   const limitValue = Number.isNaN(limitRaw) ? 24 : limitRaw;
   const limit = Math.max(1, Math.min(limitValue, 200));
@@ -463,6 +576,34 @@ function handleDownloadStatus(req, res) {
   const payload = JSON.stringify({ ok: true, status: getDownloadStatus() });
   res.writeHead(200, { 'Content-Type': MIME['.json'] });
   res.end(payload);
+}
+
+function handleIndexStatus(req, res) {
+  const payload = JSON.stringify({
+    ok: true,
+    indexedAt: indexMeta.lastIndexedAt,
+    indexedTotal: indexMeta.indexedTotal,
+  });
+  res.writeHead(200, { 'Content-Type': MIME['.json'] });
+  res.end(payload);
+}
+
+function handleStream(req, res) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+  });
+  res.write('retry: 5000\n\n');
+  sendSse(res, 'index', {
+    indexedAt: indexMeta.lastIndexedAt,
+    indexedTotal: indexMeta.indexedTotal,
+    reason: 'hello',
+  });
+  sseClients.add(res);
+  req.on('close', () => {
+    sseClients.delete(res);
+  });
 }
 
 function serveStaticFile(res, filePath) {
@@ -513,6 +654,14 @@ const server = http.createServer((req, res) => {
     handleSearch(req, res, parsed.query || {});
     return;
   }
+  if (pathname === '/api/index' && req.method === 'GET') {
+    handleIndexStatus(req, res);
+    return;
+  }
+  if (pathname === '/api/stream' && req.method === 'GET') {
+    handleStream(req, res);
+    return;
+  }
   if (pathname === '/api/facets' && req.method === 'GET') {
     handleFacets(req, res, parsed.query || {});
     return;
@@ -555,6 +704,20 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, () => {
   buildIndex();
+  broadcastIndexUpdate('startup');
+  watchDirectoryTree(DOWNLOAD_DIR);
+  watchDirectoryTree(TAGS_DIR);
   console.log(`SoyScraper Web UI running at http://localhost:${PORT}`);
   console.log(`Using downloads from: ${DOWNLOAD_DIR}`);
 });
+
+const heartbeat = setInterval(() => {
+  for (const res of sseClients) {
+    try {
+      res.write(': ping\n\n');
+    } catch (err) {
+      sseClients.delete(res);
+    }
+  }
+}, SSE_HEARTBEAT_MS);
+heartbeat.unref();

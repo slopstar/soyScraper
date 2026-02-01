@@ -36,6 +36,13 @@ let downloadPollTimer = null;
 let downloadPollInFlight = false;
 let downloadPopoverOpen = false;
 let downloadLogVisible = false;
+let lastIndexedAt = null;
+let indexEventSource = null;
+let indexPollTimer = null;
+let indexPollInFlight = false;
+let autoRefreshTimer = null;
+let autoRefreshInFlight = false;
+let pendingIndexRefresh = false;
 
 function escapeHtml(value) {
   return String(value)
@@ -65,6 +72,31 @@ function normalizeQuery(input) {
     /\b(tag|t|variant|v)\s*:\s*"([^"]+)"/gi,
     (match, key, value) => `${key.toLowerCase()}:${normalizeFilterValue(value)}`
   );
+}
+
+function parsePostNumberValue(value, fallbackText) {
+  const raw = String(value || '').trim();
+  if (raw) {
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  const fallback = String(fallbackText || '');
+  const match = fallback.match(/(\d+)/);
+  if (!match) return null;
+  const parsed = Number.parseInt(match[1], 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function compareByPostNumberDesc(a, b) {
+  const aNum = parsePostNumberValue(a.postNumber, a.baseName);
+  const bNum = parsePostNumberValue(b.postNumber, b.baseName);
+  if (aNum === null && bNum === null) {
+    return String(a.baseName || '').localeCompare(String(b.baseName || ''));
+  }
+  if (aNum === null) return 1;
+  if (bNum === null) return -1;
+  if (aNum !== bNum) return bNum - aNum;
+  return String(a.baseName || '').localeCompare(String(b.baseName || ''));
 }
 
 function parseTokens(input) {
@@ -202,7 +234,8 @@ function renderResults(results) {
     return;
   }
 
-  results.forEach((item, idx) => {
+  const sorted = results.slice().sort(compareByPostNumberDesc);
+  sorted.forEach((item, idx) => {
     const card = document.createElement('article');
     card.className = 'card';
     card.style.setProperty('--i', idx);
@@ -403,6 +436,7 @@ async function runSearch({ refresh = false, page = currentPage } = {}) {
     indexStat.textContent = `Indexed: ${data.indexedTotal}`;
     const updated = data.indexedAt ? new Date(data.indexedAt).toLocaleString() : '—';
     updateStat.textContent = `Updated: ${updated}`;
+    lastIndexedAt = data.indexedAt || lastIndexedAt;
 
     updateChipActive();
 
@@ -484,6 +518,73 @@ function getDownloadPollDelay(status) {
   return status.running ? 1000 : 8000;
 }
 
+function scheduleAutoRefresh(delay = 400) {
+  pendingIndexRefresh = true;
+  if (autoRefreshTimer) return;
+  autoRefreshTimer = setTimeout(async () => {
+    autoRefreshTimer = null;
+    if (!pendingIndexRefresh || autoRefreshInFlight) return;
+    pendingIndexRefresh = false;
+    autoRefreshInFlight = true;
+    await runSearch({ page: currentPage });
+    await loadFacets();
+    autoRefreshInFlight = false;
+  }, delay);
+}
+
+function handleIndexUpdate(indexedAt) {
+  if (!indexedAt) return;
+  if (indexedAt === lastIndexedAt) return;
+  lastIndexedAt = indexedAt;
+  scheduleAutoRefresh();
+}
+
+function scheduleIndexPoll(delay) {
+  if (indexPollTimer) clearTimeout(indexPollTimer);
+  indexPollTimer = setTimeout(pollIndexStatus, delay);
+}
+
+function getIndexPollDelay() {
+  return document.hidden ? 15000 : 5000;
+}
+
+async function pollIndexStatus() {
+  if (indexPollInFlight) return;
+  indexPollInFlight = true;
+  try {
+    const response = await fetch('/api/index');
+    const data = await response.json();
+    if (response.ok && data.ok) {
+      handleIndexUpdate(data.indexedAt);
+    }
+  } catch (err) {
+    // ignore
+  } finally {
+    indexPollInFlight = false;
+    scheduleIndexPoll(getIndexPollDelay());
+  }
+}
+
+function startIndexStream() {
+  if (!window.EventSource) return false;
+  const source = new EventSource('/api/stream');
+  indexEventSource = source;
+  source.addEventListener('index', (event) => {
+    try {
+      const data = JSON.parse(event.data || '{}');
+      handleIndexUpdate(data.indexedAt);
+    } catch (err) {
+      // ignore
+    }
+  });
+  source.addEventListener('error', () => {
+    source.close();
+    indexEventSource = null;
+    scheduleIndexPoll(2000);
+  });
+  return true;
+}
+
 function scheduleDownloadPoll(delay) {
   if (downloadPollTimer) clearTimeout(downloadPollTimer);
   downloadPollTimer = setTimeout(pollDownloadStatus, delay);
@@ -542,7 +643,11 @@ setDownloadPopoverOpen(false);
 loadFacets();
 runSearch({ page: 1 });
 pollDownloadStatus();
+if (!startIndexStream()) {
+  scheduleIndexPoll(2000);
+}
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) pollDownloadStatus();
+  if (!document.hidden && !indexEventSource) scheduleIndexPoll(2000);
 });

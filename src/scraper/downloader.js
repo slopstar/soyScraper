@@ -10,8 +10,8 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Random delay between min and max ms to avoid bot detection */
-function randomSleep(minMs = 5000, maxMs = 6000) {
+/** Random delay between min and max ms (default 20% jitter around 5s) to avoid bot detection */
+function randomSleep(minMs = 4000, maxMs = 6000) {
   const ms = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
   console.log(`Waiting ${ms / 1000} seconds before next post...`);
   return sleep(ms);
@@ -166,10 +166,8 @@ async function runDownloader(options = {}) {
     const end = typeof optEnd === 'number' && optEnd > 0 ? optEnd : maxPost || start;
     const maxPosts = Number.isInteger(options.maxPosts) && options.maxPosts > 0 ? options.maxPosts : null;
     const effectiveEnd = maxPosts ? Math.min(end, start + maxPosts - 1) : end;
-    const delayMin = Number.isInteger(options.delayMinMs) ? options.delayMinMs : 5000;
+    const delayMin = Number.isInteger(options.delayMinMs) ? options.delayMinMs : 4000;
     const delayMax = Number.isInteger(options.delayMaxMs) ? options.delayMaxMs : 6000;
-    const normalizedDelayMin = Math.min(delayMin, delayMax);
-    const normalizedDelayMax = Math.max(delayMin, delayMax);
     console.log(`Downloading posts from ${start} to ${effectiveEnd}...`);
 
     const urlPrefix = 'https://soybooru.com/post/view/';
@@ -183,7 +181,7 @@ async function runDownloader(options = {}) {
           label: `post ${i}`,
         }
       );
-      if (i < effectiveEnd) await randomSleep(normalizedDelayMin, normalizedDelayMax);
+      if (i < effectiveEnd) await randomSleep(delayMin, delayMax);
     }
   } finally {
     await page.close();

@@ -114,7 +114,7 @@ Options:
   --out-dir <path>    Download directory (default: ./data/downloadedImages)
   --delay-min <ms>    Minimum delay between posts (default: 5000)
   --delay-max <ms>    Maximum delay between posts (default: 6000)
-  --retries <n>       Retries per post (default: 2)
+  --retries <n>       Retries per post (default: 10)
   --retry-delay <ms>  Base retry delay (default: 2000)
   --timeout <ms>      Navigation timeout per post (default: 30000)
   --headless          Run browser headless
@@ -128,7 +128,7 @@ Options:
 }
 
 async function withRetries(task, options = {}) {
-  const retries = Number.isInteger(options.retries) ? options.retries : 2;
+  const retries = Number.isInteger(options.retries) ? options.retries : 10;
   const baseDelayMs = Number.isInteger(options.retryDelayMs) ? options.retryDelayMs : 2000;
   const label = options.label || 'task';
   let attempt = 0;

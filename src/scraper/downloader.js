@@ -34,6 +34,8 @@ function parseArgs(argv) {
     else if (arg.startsWith('--delay-max=')) options.delayMaxMs = arg.split('=').slice(1).join('=');
     else if (arg === '--retries') options.retries = argv[++i];
     else if (arg.startsWith('--retries=')) options.retries = arg.split('=').slice(1).join('=');
+    else if (arg === '--max-consecutive-failures') options.maxConsecutiveFailures = argv[++i];
+    else if (arg.startsWith('--max-consecutive-failures=')) options.maxConsecutiveFailures = arg.split('=').slice(1).join('=');
     else if (arg === '--retry-delay') options.retryDelayMs = argv[++i];
     else if (arg.startsWith('--retry-delay=')) options.retryDelayMs = arg.split('=').slice(1).join('=');
     else if (arg === '--timeout') options.timeout = argv[++i];
@@ -58,6 +60,9 @@ function parseArgs(argv) {
   if (options.retryDelayMs != null) options.retryDelayMs = parseInt(options.retryDelayMs, 10);
   if (options.timeout != null) options.timeout = parseInt(options.timeout, 10);
   if (options.maxPosts != null) options.maxPosts = parseInt(options.maxPosts, 10);
+  if (options.maxConsecutiveFailures != null) {
+    options.maxConsecutiveFailures = parseInt(options.maxConsecutiveFailures, 10);
+  }
 
   return options;
 }
@@ -114,8 +119,10 @@ Options:
   --out-dir <path>    Download directory (default: ./data/downloadedImages)
   --delay-min <ms>    Minimum delay between posts (default: 5000)
   --delay-max <ms>    Maximum delay between posts (default: 6000)
-  --retries <n>       Retries per post (default: 10)
+  --retries <n>       Retries for max-post lookup (default: 10)
   --retry-delay <ms>  Base retry delay (default: 2000)
+  --max-consecutive-failures <n>
+                     Abort after N consecutive failed posts (default: 10)
   --timeout <ms>      Navigation timeout per post (default: 30000)
   --headless          Run browser headless
   --no-headless       Run browser with UI
@@ -168,20 +175,34 @@ async function runDownloader(options = {}) {
     const effectiveEnd = maxPosts ? Math.min(end, start + maxPosts - 1) : end;
     const delayMin = Number.isInteger(options.delayMinMs) ? options.delayMinMs : 4000;
     const delayMax = Number.isInteger(options.delayMaxMs) ? options.delayMaxMs : 6000;
+    const maxConsecutiveFailures = Number.isInteger(options.maxConsecutiveFailures)
+      ? options.maxConsecutiveFailures
+      : 10;
+    let consecutiveFailures = 0;
     console.log(`Downloading posts from ${start} to ${effectiveEnd}...`);
 
     const urlPrefix = 'https://soybooru.com/post/view/';
     for (let i = start; i <= effectiveEnd; i++) {
       const postUrl = `${urlPrefix}${i}`;
-      await withRetries(
-        () => downloadFromUrl(postUrl, page, { ...options, dir: downloadDir, tagFilters }),
-        {
-          retries: options.retries,
-          retryDelayMs: options.retryDelayMs,
-          label: `post ${i}`,
+      let sleptAfterFailure = false;
+      try {
+        await downloadFromUrl(postUrl, page, { ...options, dir: downloadDir, tagFilters });
+        consecutiveFailures = 0;
+      } catch (err) {
+        consecutiveFailures += 1;
+        console.warn(`Post ${i} failed (${consecutiveFailures}/${maxConsecutiveFailures}).`);
+        try {
+          await page.goto(postUrl, { waitUntil: 'networkidle2', timeout: options.timeout ?? 30000 });
+        } catch (reloadErr) {
+          console.warn(`Failed to refresh page after error: ${reloadErr.message}`);
         }
-      );
-      if (i < effectiveEnd) await randomSleep(delayMin, delayMax);
+        await randomSleep(delayMin, delayMax);
+        sleptAfterFailure = true;
+        if (consecutiveFailures >= maxConsecutiveFailures) {
+          throw new Error(`Aborting after ${consecutiveFailures} consecutive failed posts.`);
+        }
+      }
+      if (!sleptAfterFailure && i < effectiveEnd) await randomSleep(delayMin, delayMax);
     }
   } finally {
     await page.close();

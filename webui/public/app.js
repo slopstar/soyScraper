@@ -43,7 +43,6 @@ let indexPollInFlight = false;
 let autoRefreshTimer = null;
 let autoRefreshInFlight = false;
 let pendingIndexRefresh = false;
-let matchesRefreshTimer = null;
 let renderedMatchKeys = new Set();
 
 function getMatchKey(item) {
@@ -528,7 +527,6 @@ async function startDownload() {
     if (!response.ok || !data.ok) throw new Error(data.error || 'Start failed');
     renderDownloadStatus(data.status);
     scheduleDownloadPoll(1000);
-    scheduleMatchesRefresh(1000);
   } catch (err) {
     downloadStatusEl.textContent = err.message;
   }
@@ -625,24 +623,6 @@ function scheduleDownloadPoll(delay) {
   downloadPollTimer = setTimeout(pollDownloadStatus, delay);
 }
 
-function scheduleMatchesRefresh(delay) {
-  if (matchesRefreshTimer) clearTimeout(matchesRefreshTimer);
-  matchesRefreshTimer = setTimeout(refreshMatches, delay);
-}
-
-function getMatchesRefreshDelay() {
-  return document.hidden ? 30000 : 10000;
-}
-
-async function refreshMatches() {
-  try {
-    if (!lastDownloadStatus?.running) return;
-    await runSearch({ page: currentPage, mode: 'incremental' });
-  } finally {
-    scheduleMatchesRefresh(getMatchesRefreshDelay());
-  }
-}
-
 async function pollDownloadStatus() {
   if (downloadPollInFlight) return;
   downloadPollInFlight = true;
@@ -699,10 +679,8 @@ pollDownloadStatus();
 if (!startIndexStream()) {
   scheduleIndexPoll(2000);
 }
-scheduleMatchesRefresh(2000);
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) pollDownloadStatus();
   if (!document.hidden && !indexEventSource) scheduleIndexPoll(2000);
-  if (!document.hidden) scheduleMatchesRefresh(1000);
 });

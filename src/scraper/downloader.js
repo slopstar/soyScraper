@@ -18,7 +18,7 @@ function randomSleep(minMs = 4000, maxMs = 6000) {
 }
 
 function parseArgs(argv) {
-  const options = {};
+  const options = { strictMediaSafety: true };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') options.help = true;
@@ -50,6 +50,8 @@ function parseArgs(argv) {
     else if (arg.startsWith('--nsfw-file=')) options.nsfwFile = arg.split('=').slice(1).join('=');
     else if (arg === '--nsfl-file') options.nsflFile = argv[++i];
     else if (arg.startsWith('--nsfl-file=')) options.nsflFile = arg.split('=').slice(1).join('=');
+    else if (arg === '--strict-media-safety') options.strictMediaSafety = true;
+    else if (arg === '--no-strict-media-safety') options.strictMediaSafety = false;
   }
 
   if (options.start != null) options.start = parseInt(options.start, 10);
@@ -130,6 +132,11 @@ Options:
   --nsfw-file <path>  Path to a newline-delimited NSFW tag list
   --skip-nsfl         Skip posts with tags listed in the NSFL blocklist
   --nsfl-file <path>  Path to a newline-delimited NSFL tag list
+  --strict-media-safety
+                     Enforce strict media checks (host allowlist, type validation,
+                     quarantine write, optional antivirus scan)
+  --no-strict-media-safety
+                     Disable strict media checks (not recommended)
   -h, --help          Show this help text
 `);
 }

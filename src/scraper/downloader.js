@@ -113,7 +113,7 @@ async function ensureVirusScannerAvailable(options = {}) {
 }
 
 /** Random delay between min and max ms (default 20% jitter around 5s) to avoid bot detection */
-function randomSleep(minMs = 4000, maxMs = 6000) {
+function randomSleep(minMs = 2000, maxMs = 3000) {
   const ms = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
   console.log(`Waiting ${ms / 1000} seconds before next post...`);
   return sleep(ms);

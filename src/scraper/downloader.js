@@ -112,8 +112,13 @@ async function ensureVirusScannerAvailable(options = {}) {
   console.log(`Virus scanner is ready: ${scannerBin}`);
 }
 
-/** Random delay between min and max ms (default 20% jitter around 5s) to avoid bot detection */
-function randomSleep(minMs = 2000, maxMs = 3000) {
+/** Random delay around 2s with +/-25% jitter (1500-2500ms). */
+function randomSleep() {
+  const baseMs = 2000;
+  const jitterFraction = 0.25;
+  const jitterMs = Math.floor(baseMs * jitterFraction);
+  const minMs = baseMs - jitterMs;
+  const maxMs = baseMs + jitterMs;
   const ms = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
   console.log(`Waiting ${ms / 1000} seconds before next post...`);
   return sleep(ms);
@@ -130,10 +135,6 @@ function parseArgs(argv) {
     else if (arg.startsWith('--end=')) options.end = arg.split('=').slice(1).join('=');
     else if (arg === '--out-dir') options.outDir = argv[++i];
     else if (arg.startsWith('--out-dir=')) options.outDir = arg.split('=').slice(1).join('=');
-    else if (arg === '--delay-min') options.delayMinMs = argv[++i];
-    else if (arg.startsWith('--delay-min=')) options.delayMinMs = arg.split('=').slice(1).join('=');
-    else if (arg === '--delay-max') options.delayMaxMs = argv[++i];
-    else if (arg.startsWith('--delay-max=')) options.delayMaxMs = arg.split('=').slice(1).join('=');
     else if (arg === '--retries') options.retries = argv[++i];
     else if (arg.startsWith('--retries=')) options.retries = arg.split('=').slice(1).join('=');
     else if (arg === '--max-consecutive-failures') options.maxConsecutiveFailures = argv[++i];
@@ -158,8 +159,6 @@ function parseArgs(argv) {
 
   if (options.start != null) options.start = parseInt(options.start, 10);
   if (options.end != null) options.end = parseInt(options.end, 10);
-  if (options.delayMinMs != null) options.delayMinMs = parseInt(options.delayMinMs, 10);
-  if (options.delayMaxMs != null) options.delayMaxMs = parseInt(options.delayMaxMs, 10);
   if (options.retries != null) options.retries = parseInt(options.retries, 10);
   if (options.retryDelayMs != null) options.retryDelayMs = parseInt(options.retryDelayMs, 10);
   if (options.timeout != null) options.timeout = parseInt(options.timeout, 10);
@@ -221,8 +220,6 @@ Options:
   --end <n>           End post number (default: latest on site)
   --max-posts <n>     Max number of posts to download from start
   --out-dir <path>    Download directory (default: ./data/downloadedImages)
-  --delay-min <ms>    Minimum delay between posts (default: 5000)
-  --delay-max <ms>    Maximum delay between posts (default: 6000)
   --retries <n>       Retries for max-post lookup (default: 10)
   --retry-delay <ms>  Base retry delay (default: 2000)
   --max-consecutive-failures <n>
@@ -285,8 +282,6 @@ async function runDownloader(options = {}) {
     const end = typeof optEnd === 'number' && optEnd > 0 ? optEnd : maxPost || start;
     const maxPosts = Number.isInteger(options.maxPosts) && options.maxPosts > 0 ? options.maxPosts : null;
     const effectiveEnd = maxPosts ? Math.min(end, start + maxPosts - 1) : end;
-    const delayMin = Number.isInteger(options.delayMinMs) ? options.delayMinMs : 4000;
-    const delayMax = Number.isInteger(options.delayMaxMs) ? options.delayMaxMs : 6000;
     const maxConsecutiveFailures = Number.isInteger(options.maxConsecutiveFailures)
       ? options.maxConsecutiveFailures
       : 10;
@@ -308,13 +303,13 @@ async function runDownloader(options = {}) {
         } catch (reloadErr) {
           console.warn(`Failed to refresh page after error: ${reloadErr.message}`);
         }
-        await randomSleep(delayMin, delayMax);
+        await randomSleep();
         sleptAfterFailure = true;
         if (consecutiveFailures >= maxConsecutiveFailures) {
           throw new Error(`Aborting after ${consecutiveFailures} consecutive failed posts.`);
         }
       }
-      if (!sleptAfterFailure && i < effectiveEnd) await randomSleep(delayMin, delayMax);
+      if (!sleptAfterFailure && i < effectiveEnd) await randomSleep();
     }
   } finally {
     await page.close();

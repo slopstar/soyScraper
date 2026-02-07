@@ -1,5 +1,7 @@
 const fs = require('fs');
 const path = require('path');
+const readline = require('readline');
+const { spawn } = require('child_process');
 const { downloadFromUrl } = require('./downloadImages.js');
 const { getMaxPost } = require('./maxPostChecker.js');
 const { launchBrowser } = require('./browser.js');
@@ -8,6 +10,106 @@ const { DOWNLOAD_DIR } = require('../config.js');
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseBoolean(value, fallback = false) {
+  if (value == null) return fallback;
+  const normalized = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+}
+
+function isExecutable(filePath) {
+  try {
+    fs.accessSync(filePath, fs.constants.X_OK);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function commandExists(commandName) {
+  if (!commandName || typeof commandName !== 'string') return false;
+  if (commandName.includes(path.sep)) return isExecutable(commandName);
+  const envPath = process.env.PATH || '';
+  const segments = envPath.split(path.delimiter).filter(Boolean);
+  for (const segment of segments) {
+    const candidate = path.join(segment, commandName);
+    if (isExecutable(candidate)) return true;
+  }
+  return false;
+}
+
+function getMediaSafetyPreflightConfig(options = {}) {
+  const strictMediaSafety = Boolean(options.strictMediaSafety);
+  const requireVirusScan = strictMediaSafety
+    ? parseBoolean(process.env.SOYSCRAPER_REQUIRE_VIRUS_SCAN, true)
+    : parseBoolean(process.env.SOYSCRAPER_REQUIRE_VIRUS_SCAN, false);
+  const scannerBin = String(process.env.SOYSCRAPER_VIRUS_SCANNER_BIN || 'clamscan').trim();
+  return { strictMediaSafety, requireVirusScan, scannerBin };
+}
+
+function promptYesNo(question) {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(question, (answer) => {
+      rl.close();
+      const normalized = String(answer || '').trim().toLowerCase();
+      if (!normalized || normalized === 'y' || normalized === 'yes') {
+        resolve(true);
+        return;
+      }
+      resolve(false);
+    });
+  });
+}
+
+function runInstallerScript(scriptPath) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('bash', [scriptPath], {
+      cwd: path.resolve(__dirname, '..', '..'),
+      stdio: 'inherit',
+    });
+    child.once('error', (err) => reject(err));
+    child.once('close', (code) => resolve(code));
+  });
+}
+
+async function ensureVirusScannerAvailable(options = {}) {
+  const { strictMediaSafety, requireVirusScan, scannerBin } = getMediaSafetyPreflightConfig(options);
+  if (!strictMediaSafety || !requireVirusScan) return;
+  if (commandExists(scannerBin)) return;
+
+  const scriptPath = path.resolve(__dirname, '..', '..', 'scripts', 'install-clamav.sh');
+  const missingMessage = [
+    `Strict media safety requires virus scanner "${scannerBin}", but it is not installed.`,
+    `Run: npm run setup:clamav`,
+    `Or bypass temporarily: SOYSCRAPER_REQUIRE_VIRUS_SCAN=false npm start`,
+  ].join('\n');
+  console.error(missingMessage);
+
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error(`Missing required virus scanner binary: ${scannerBin}`);
+  }
+  if (!fs.existsSync(scriptPath)) {
+    throw new Error(`Installer script not found: ${scriptPath}`);
+  }
+
+  const shouldInstall = await promptYesNo('Install ClamAV now? [Y/n] ');
+  if (!shouldInstall) {
+    throw new Error(`Cannot continue without required virus scanner: ${scannerBin}`);
+  }
+
+  console.log('Running ClamAV installer...');
+  const code = await runInstallerScript(scriptPath);
+  if (code !== 0) {
+    throw new Error(`ClamAV installer failed with exit code ${code}`);
+  }
+  if (!commandExists(scannerBin)) {
+    throw new Error(`Scanner "${scannerBin}" still not found after install`);
+  }
+  console.log(`Virus scanner is ready: ${scannerBin}`);
 }
 
 /** Random delay between min and max ms (default 20% jitter around 5s) to avoid bot detection */
@@ -137,6 +239,7 @@ Options:
                      quarantine write, optional antivirus scan)
   --no-strict-media-safety
                      Disable strict media checks (not recommended)
+  setup helper: npm run setup:clamav
   -h, --help          Show this help text
 `);
 }
@@ -167,6 +270,8 @@ async function runDownloader(options = {}) {
   const highestPost = getLastDownloadedPost(downloadDir);
   const defaultStart = highestPost != null ? highestPost + 1 : 1;
   const start = typeof optStart === 'number' && optStart > 0 ? optStart : defaultStart;
+
+  await ensureVirusScannerAvailable(options);
 
   const browser = await launchBrowser({ headless: options.headless });
   const page = await browser.newPage();

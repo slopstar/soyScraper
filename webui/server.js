@@ -15,15 +15,18 @@ const MIME = {
   '.js': 'text/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
   '.png': 'image/png',
+  '.avif': 'image/avif',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.gif': 'image/gif',
   '.webp': 'image/webp',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
 };
 
-const IMAGE_EXTS = new Set([
+const MEDIA_EXTS = new Set([
   '.jpg',
   '.jpeg',
   '.png',
@@ -33,6 +36,8 @@ const IMAGE_EXTS = new Set([
   '.tif',
   '.tiff',
   '.avif',
+  '.mp4',
+  '.webm',
 ]);
 
 let indexCache = [];
@@ -49,6 +54,7 @@ const MAX_LOG_LINES = 200;
 const RESCAN_DEBOUNCE_MS = 1500;
 const SSE_HEARTBEAT_MS = 30000;
 const sseClients = new Set();
+let downloadStdoutBuffer = '';
 
 function safeJoin(baseDir, targetPath) {
   const normalized = path.normalize(targetPath).replace(/^([/\\])+/, '');
@@ -101,6 +107,38 @@ function appendDownloadLog(chunk) {
   }
 }
 
+function processDownloadStdoutLine(line) {
+  const text = String(line || '').trim();
+  if (!text) return;
+  if (/^Saved:\s+\S+/i.test(text)) {
+    scheduleIndexRebuild('download saved');
+  }
+}
+
+function flushDownloadStdoutBuffer() {
+  const trailing = downloadStdoutBuffer.trim();
+  downloadStdoutBuffer = '';
+  if (!trailing) return;
+  processDownloadStdoutLine(trailing);
+}
+
+function handleDownloadStdoutChunk(data) {
+  const text = String(data || '');
+  appendDownloadLog(text);
+  if (!text) return;
+
+  const combined = downloadStdoutBuffer + text;
+  const parts = combined.split(/\r?\n/);
+  downloadStdoutBuffer = parts.pop() || '';
+  for (const line of parts) {
+    processDownloadStdoutLine(line);
+  }
+}
+
+function handleDownloadStderrChunk(data) {
+  appendDownloadLog(data);
+}
+
 function setDownloadState(update) {
   downloadState = { ...downloadState, ...update };
 }
@@ -121,6 +159,7 @@ function startDownload(args = []) {
   const cliPath = path.join(ROOT_DIR, 'src', 'cli.js');
   const sanitizedArgs = args.filter((arg) => typeof arg === 'string');
   downloadLog.length = 0;
+  downloadStdoutBuffer = '';
   const child = spawn(process.execPath, [cliPath, ...sanitizedArgs], {
     cwd: ROOT_DIR,
     env: { ...process.env },
@@ -135,10 +174,11 @@ function startDownload(args = []) {
   });
   appendDownloadLog(`Started download at ${new Date().toLocaleString()}`);
 
-  child.stdout.on('data', (data) => appendDownloadLog(data));
-  child.stderr.on('data', (data) => appendDownloadLog(data));
+  child.stdout.on('data', (data) => handleDownloadStdoutChunk(data));
+  child.stderr.on('data', (data) => handleDownloadStderrChunk(data));
 
   child.on('exit', (code) => {
+    flushDownloadStdoutBuffer();
     appendDownloadLog(`Download process exited with code ${code}`);
     downloadProcess = null;
     setDownloadState({
@@ -149,6 +189,7 @@ function startDownload(args = []) {
   });
 
   child.on('error', (err) => {
+    flushDownloadStdoutBuffer();
     appendDownloadLog(`Download process error: ${err.message}`);
     downloadProcess = null;
     setDownloadState({
@@ -186,16 +227,16 @@ function collectJson(req) {
   });
 }
 
-function walkImages(dir, baseDir, items) {
+function walkMedia(dir, baseDir, items) {
   if (!fs.existsSync(dir)) return;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      walkImages(fullPath, baseDir, items);
+      walkMedia(fullPath, baseDir, items);
     } else if (entry.isFile()) {
       const ext = path.extname(entry.name).toLowerCase();
-      if (!IMAGE_EXTS.has(ext)) continue;
+      if (!MEDIA_EXTS.has(ext)) continue;
       const relPath = path.relative(baseDir, fullPath);
       items.push({ fullPath, relPath });
     }
@@ -299,7 +340,7 @@ function buildFacets(index) {
 
 function buildIndex() {
   const items = [];
-  walkImages(DOWNLOAD_DIR, DOWNLOAD_DIR, items);
+  walkMedia(DOWNLOAD_DIR, DOWNLOAD_DIR, items);
   const tagIndex = loadTagMetadataMap();
 
   const index = items.map(({ relPath }) => {
@@ -365,6 +406,17 @@ function addDirectoryWatcher(dir) {
   if (activeWatchers.has(dir)) return;
   try {
     const watcher = fs.watch(dir, { persistent: true }, (eventType, filename) => {
+      if (downloadProcess) {
+        if (!filename) return;
+        const nextPath = path.join(dir, filename);
+        try {
+          const stats = fs.statSync(nextPath);
+          if (stats.isDirectory()) addDirectoryWatcher(nextPath);
+        } catch (err) {
+          // Ignore transient paths that disappear quickly.
+        }
+        return;
+      }
       scheduleIndexRebuild(`fs.watch ${eventType}`);
       if (!filename) return;
       const nextPath = path.join(dir, filename);
@@ -413,6 +465,7 @@ function watchMetadataDb(dbPath) {
   const watched = new Set([base, `${base}-wal`, `${base}-shm`]);
   try {
     const watcher = fs.watch(dir, { persistent: true }, (eventType, filename) => {
+      if (downloadProcess) return;
       if (!filename) return;
       if (!watched.has(filename)) return;
       scheduleIndexRebuild(`metadata ${eventType}`);

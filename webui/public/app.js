@@ -237,14 +237,24 @@ function buildResultCard(item, idx) {
   const media = document.createElement('div');
   media.className = 'card-media';
 
-  const img = document.createElement('img');
-  img.src = item.urlPath;
-  img.alt = item.fileName;
-  img.loading = 'lazy';
-  img.addEventListener('dblclick', (event) => {
+  const ext = String(item.ext || '').toLowerCase();
+  const isVideo = ext === '.mp4' || ext === '.webm';
+  const mediaEl = isVideo ? document.createElement('video') : document.createElement('img');
+  mediaEl.src = item.urlPath;
+  mediaEl.addEventListener('dblclick', (event) => {
     event.preventDefault();
     window.open(item.urlPath, '_blank', 'noopener');
   });
+  if (isVideo) {
+    mediaEl.preload = 'metadata';
+    mediaEl.muted = true;
+    mediaEl.loop = true;
+    mediaEl.playsInline = true;
+    mediaEl.controls = true;
+  } else {
+    mediaEl.alt = item.fileName;
+    mediaEl.loading = 'lazy';
+  }
 
   const formatList = (list) => list.map((value) => String(value).replace(/_/g, ' ')).join(', ');
   const variants = item.variants && item.variants.length ? formatList(item.variants) : '—';
@@ -261,8 +271,8 @@ function buildResultCard(item, idx) {
   openFull.href = item.urlPath;
   openFull.target = '_blank';
   openFull.rel = 'noopener';
-  openFull.setAttribute('aria-label', 'Open full image in new tab');
-  openFull.title = 'Open full image in new tab';
+  openFull.setAttribute('aria-label', `Open full ${isVideo ? 'video' : 'image'} in new tab`);
+  openFull.title = `Open full ${isVideo ? 'video' : 'image'} in new tab`;
   openFull.textContent = '↗';
   overlayTop.appendChild(openFull);
 
@@ -311,7 +321,7 @@ function buildResultCard(item, idx) {
   overlay.appendChild(overlayTop);
   overlay.appendChild(info);
 
-  media.appendChild(img);
+  media.appendChild(mediaEl);
   media.appendChild(overlay);
 
   card.appendChild(media);

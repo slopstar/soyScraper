@@ -363,21 +363,38 @@ function resolvePostDir(rootDir, postNumber) {
 }
 
 async function extractImageUrls(page, referer) {
-	const src = await page.$eval('div.image-list > a:first-child img#main_image', (img) => img.getAttribute('src'))
-		.catch(() => page.$eval('img#main_image', (img) => img.getAttribute('src')))
-		.catch(() => null);
-	
-	if (!src) {
-		return [];
+	const rawUrls = await page
+		.$$eval(
+			[
+				'div.image-list > a:first-child img#main_image',
+				'img#main_image',
+				'video#main_image source',
+				'video#main_image',
+				'div.image-list > a:first-child video source',
+				'div.image-list > a:first-child video',
+			].join(','),
+			(elements) => {
+				const urls = [];
+				for (const el of elements) {
+					const src = el.getAttribute('src') || el.getAttribute('data-src') || '';
+					if (src && src.trim()) urls.push(src.trim());
+				}
+				return urls;
+			}
+		)
+		.catch(() => []);
+
+	if (!rawUrls.length) return [];
+
+	const unique = new Set();
+	for (const src of rawUrls) {
+		try {
+			unique.add(new URL(src, referer).href);
+		} catch (_) {
+			console.warn(`Skipping invalid URL: ${src}`);
+		}
 	}
-	
-	try {
-		const fullUrl = new URL(src, referer).href;
-		return [fullUrl];
-	} catch (err) {
-		console.warn(`Skipping invalid URL: ${src}`);
-		return [];
-	}
+	return Array.from(unique);
 }
 
 function getExtension(imageUrl) {

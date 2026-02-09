@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/cli.js",
     "setup:clamav": "bash scripts/install-clamav.sh",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --test",
     "single-post-test": "node scripts/singlePostTest.js",
     "webui": "node webui/server.js"
   },

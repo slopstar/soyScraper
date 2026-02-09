@@ -2,10 +2,10 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 const { spawn } = require('child_process');
-const { downloadFromUrl } = require('./downloadImages.js');
-const { getMaxPost } = require('./maxPostChecker.js');
-const { launchBrowser } = require('./browser.js');
-const { getLastDownloadedPost } = require('../fs/localFileManager.js');
+const downloadImagesModule = require('./downloadImages.js');
+const maxPostCheckerModule = require('./maxPostChecker.js');
+const browserModule = require('./browser.js');
+const localFileManagerModule = require('../fs/localFileManager.js');
 const { DOWNLOAD_DIR } = require('../config.js');
 
 function sleep(ms) {
@@ -260,21 +260,31 @@ async function withRetries(task, options = {}) {
   }
 }
 
-async function runDownloader(options = {}) {
+async function runDownloader(options = {}, deps = {}) {
+  const runtimeDeps = {
+    downloadFromUrl: downloadImagesModule.downloadFromUrl,
+    getMaxPost: maxPostCheckerModule.getMaxPost,
+    launchBrowser: browserModule.launchBrowser,
+    getLastDownloadedPost: localFileManagerModule.getLastDownloadedPost,
+    ensureVirusScannerAvailable,
+    randomSleep,
+    buildTagFilters,
+    ...deps,
+  };
   const { start: optStart, end: optEnd } = options;
   const downloadDir = path.resolve(options.outDir || DOWNLOAD_DIR);
-  const tagFilters = buildTagFilters(options);
-  const highestPost = getLastDownloadedPost(downloadDir);
+  const tagFilters = runtimeDeps.buildTagFilters(options);
+  const highestPost = runtimeDeps.getLastDownloadedPost(downloadDir);
   const defaultStart = highestPost != null ? highestPost + 1 : 1;
   const start = typeof optStart === 'number' && optStart > 0 ? optStart : defaultStart;
 
-  await ensureVirusScannerAvailable(options);
+  await runtimeDeps.ensureVirusScannerAvailable(options);
 
-  const browser = await launchBrowser({ headless: options.headless });
+  const browser = await runtimeDeps.launchBrowser({ headless: options.headless });
   const page = await browser.newPage();
 
   try {
-    const maxPost = await withRetries(() => getMaxPost(browser), {
+    const maxPost = await withRetries(() => runtimeDeps.getMaxPost(browser), {
       retries: options.retries,
       retryDelayMs: options.retryDelayMs,
       label: 'getMaxPost',
@@ -293,7 +303,7 @@ async function runDownloader(options = {}) {
       const postUrl = `${urlPrefix}${i}`;
       let sleptAfterFailure = false;
       try {
-        await downloadFromUrl(postUrl, page, { ...options, dir: downloadDir, tagFilters });
+        await runtimeDeps.downloadFromUrl(postUrl, page, { ...options, dir: downloadDir, tagFilters });
         consecutiveFailures = 0;
       } catch (err) {
         consecutiveFailures += 1;
@@ -303,13 +313,13 @@ async function runDownloader(options = {}) {
         } catch (reloadErr) {
           console.warn(`Failed to refresh page after error: ${reloadErr.message}`);
         }
-        await randomSleep();
+        await runtimeDeps.randomSleep();
         sleptAfterFailure = true;
         if (consecutiveFailures >= maxConsecutiveFailures) {
           throw new Error(`Aborting after ${consecutiveFailures} consecutive failed posts.`);
         }
       }
-      if (!sleptAfterFailure && i < effectiveEnd) await randomSleep();
+      if (!sleptAfterFailure && i < effectiveEnd) await runtimeDeps.randomSleep();
     }
   } finally {
     await page.close();
@@ -317,4 +327,17 @@ async function runDownloader(options = {}) {
   }
 }
 
-module.exports = { runDownloader, parseArgs, printHelp };
+module.exports = {
+  runDownloader,
+  parseArgs,
+  printHelp,
+  __test: {
+    parseBoolean,
+    commandExists,
+    getMediaSafetyPreflightConfig,
+    normalizeTag,
+    loadTagBlocklist,
+    buildTagFilters,
+    withRetries,
+  },
+};

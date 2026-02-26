@@ -28,7 +28,7 @@ npm run webui
 
 Then open `http://localhost:3000`.
 
-If antivirus setup fails, you can still run downloads with:
+If antivirus setup fails (this is currently running ClamAV), you can still run downloads with:
 
 ```bash
 SOYSCRAPER_REQUIRE_VIRUS_SCAN=false npm start

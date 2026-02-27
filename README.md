@@ -31,6 +31,7 @@ CLI options are available (see `--help`):
 ```bash
 node src/cli.js --help
 npm start -- --start 1 --end 200
+npm start -- --fill-gaps
 ```
 
 Single post test:

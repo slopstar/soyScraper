@@ -145,6 +145,7 @@ function parseArgs(argv) {
     else if (arg.startsWith('--timeout=')) options.timeout = arg.split('=').slice(1).join('=');
     else if (arg === '--max-posts') options.maxPosts = argv[++i];
     else if (arg.startsWith('--max-posts=')) options.maxPosts = arg.split('=').slice(1).join('=');
+    else if (arg === '--fill-gaps') options.fillGaps = true;
     else if (arg === '--headless') options.headless = true;
     else if (arg === '--no-headless') options.headless = false;
     else if (arg === '--skip-nsfw') options.skipNsfw = true;
@@ -216,14 +217,16 @@ function printHelp() {
   console.log(`Usage: node src/cli.js [options]
 
 Options:
-  --start <n>         Start post number (default: last downloaded + 1)
-  --end <n>           End post number (default: latest on site)
+  --start <n>         Start post number (default: last downloaded + 1, or 1 with --fill-gaps)
+  --end <n>           End post number (default: latest on site, or local last with --fill-gaps)
   --max-posts <n>     Max number of posts to download from start
+  --fill-gaps         Scan existing files, find missing post IDs, and backfill them
   --out-dir <path>    Download directory (default: ./data/downloadedImages)
   --retries <n>       Retries for max-post lookup (default: 10)
   --retry-delay <ms>  Base retry delay (default: 2000)
   --max-consecutive-failures <n>
-                     Abort after N consecutive failed posts (default: 10)
+                     Abort after N consecutive failed posts (default: 10;
+                     fill-gaps mode keeps going unless this is set)
   --timeout <ms>      Navigation timeout per post (default: 30000)
   --headless          Run browser headless
   --no-headless       Run browser with UI
@@ -266,16 +269,18 @@ async function runDownloader(options = {}, deps = {}) {
     getMaxPost: maxPostCheckerModule.getMaxPost,
     launchBrowser: browserModule.launchBrowser,
     getLastDownloadedPost: localFileManagerModule.getLastDownloadedPost,
+    getDownloadedPostNumbers: localFileManagerModule.getDownloadedPostNumbers,
     ensureVirusScannerAvailable,
     randomSleep,
     buildTagFilters,
     ...deps,
   };
   const { start: optStart, end: optEnd } = options;
+  const fillGaps = Boolean(options.fillGaps);
   const downloadDir = path.resolve(options.outDir || DOWNLOAD_DIR);
   const tagFilters = runtimeDeps.buildTagFilters(options);
-  const highestPost = runtimeDeps.getLastDownloadedPost(downloadDir);
-  const defaultStart = highestPost != null ? highestPost + 1 : 1;
+  const highestPost = fillGaps ? null : runtimeDeps.getLastDownloadedPost(downloadDir);
+  const defaultStart = fillGaps ? 1 : (highestPost != null ? highestPost + 1 : 1);
   const start = typeof optStart === 'number' && optStart > 0 ? optStart : defaultStart;
 
   await runtimeDeps.ensureVirusScannerAvailable(options);
@@ -284,30 +289,79 @@ async function runDownloader(options = {}, deps = {}) {
   const page = await browser.newPage();
 
   try {
-    const maxPost = await withRetries(() => runtimeDeps.getMaxPost(browser), {
-      retries: options.retries,
-      retryDelayMs: options.retryDelayMs,
-      label: 'getMaxPost',
-    });
-    const end = typeof optEnd === 'number' && optEnd > 0 ? optEnd : maxPost || start;
+    let downloadedPosts = null;
+    if (fillGaps) {
+      downloadedPosts = runtimeDeps.getDownloadedPostNumbers(downloadDir);
+      if (downloadedPosts.size === 0) {
+        console.log(`No downloaded posts found in ${downloadDir}.`);
+        return;
+      }
+    }
+
+    let end;
+    if (typeof optEnd === 'number' && optEnd > 0) {
+      end = optEnd;
+    } else if (fillGaps) {
+      end = 0;
+      for (const postNumber of downloadedPosts) {
+        if (postNumber > end) end = postNumber;
+      }
+      if (end <= 0) {
+        console.log(`No valid downloaded post numbers found in ${downloadDir}.`);
+        return;
+      }
+    } else {
+      const maxPost = await withRetries(() => runtimeDeps.getMaxPost(browser), {
+        retries: options.retries,
+        retryDelayMs: options.retryDelayMs,
+        label: 'getMaxPost',
+      });
+      end = maxPost || start;
+    }
+
     const maxPosts = Number.isInteger(options.maxPosts) && options.maxPosts > 0 ? options.maxPosts : null;
-    const effectiveEnd = maxPosts ? Math.min(end, start + maxPosts - 1) : end;
     const maxConsecutiveFailures = Number.isInteger(options.maxConsecutiveFailures)
       ? options.maxConsecutiveFailures
-      : 10;
+      : (fillGaps ? Number.POSITIVE_INFINITY : 10);
+    const failureLimitLabel = Number.isFinite(maxConsecutiveFailures) ? maxConsecutiveFailures : 'inf';
     let consecutiveFailures = 0;
-    console.log(`Downloading posts from ${start} to ${effectiveEnd}...`);
+    const targetPosts = [];
+    if (fillGaps) {
+      for (let postNumber = start; postNumber <= end; postNumber++) {
+        if (!downloadedPosts.has(postNumber)) targetPosts.push(postNumber);
+      }
+      if (maxPosts && targetPosts.length > maxPosts) {
+        targetPosts.length = maxPosts;
+      }
+      if (targetPosts.length === 0) {
+        console.log(`No missing posts found between ${start} and ${end}.`);
+        return;
+      }
+      console.log(`Found ${targetPosts.length} missing posts between ${start} and ${end}.`);
+      console.log(`Backfilling gaps: ${targetPosts[0]} -> ${targetPosts[targetPosts.length - 1]}.`);
+    } else {
+      const effectiveEnd = maxPosts ? Math.min(end, start + maxPosts - 1) : end;
+      if (effectiveEnd < start) {
+        console.log(`No posts to download: resolved range ${start}..${effectiveEnd}.`);
+        return;
+      }
+      console.log(`Downloading posts from ${start} to ${effectiveEnd}...`);
+      for (let postNumber = start; postNumber <= effectiveEnd; postNumber++) {
+        targetPosts.push(postNumber);
+      }
+    }
 
     const urlPrefix = 'https://soybooru.com/post/view/';
-    for (let i = start; i <= effectiveEnd; i++) {
-      const postUrl = `${urlPrefix}${i}`;
+    for (let i = 0; i < targetPosts.length; i++) {
+      const postNumber = targetPosts[i];
+      const postUrl = `${urlPrefix}${postNumber}`;
       let sleptAfterFailure = false;
       try {
         await runtimeDeps.downloadFromUrl(postUrl, page, { ...options, dir: downloadDir, tagFilters });
         consecutiveFailures = 0;
       } catch (err) {
         consecutiveFailures += 1;
-        console.warn(`Post ${i} failed (${consecutiveFailures}/${maxConsecutiveFailures}).`);
+        console.warn(`Post ${postNumber} failed (${consecutiveFailures}/${failureLimitLabel}).`);
         try {
           await page.goto(postUrl, { waitUntil: 'networkidle2', timeout: options.timeout ?? 30000 });
         } catch (reloadErr) {
@@ -315,11 +369,11 @@ async function runDownloader(options = {}, deps = {}) {
         }
         await runtimeDeps.randomSleep();
         sleptAfterFailure = true;
-        if (consecutiveFailures >= maxConsecutiveFailures) {
+        if (Number.isFinite(maxConsecutiveFailures) && consecutiveFailures >= maxConsecutiveFailures) {
           throw new Error(`Aborting after ${consecutiveFailures} consecutive failed posts.`);
         }
       }
-      if (!sleptAfterFailure && i < effectiveEnd) await runtimeDeps.randomSleep();
+      if (!sleptAfterFailure && i < targetPosts.length - 1) await runtimeDeps.randomSleep();
     }
   } finally {
     await page.close();

@@ -15,6 +15,7 @@ test('parseArgs parses supported flags and value forms', () => {
     '--timeout=9000',
     '--max-posts',
     '8',
+    '--fill-gaps',
     '--max-consecutive-failures=4',
     '--headless',
     '--skip-nsfw',
@@ -32,6 +33,7 @@ test('parseArgs parses supported flags and value forms', () => {
   assert.equal(options.retryDelayMs, 1500);
   assert.equal(options.timeout, 9000);
   assert.equal(options.maxPosts, 8);
+  assert.equal(options.fillGaps, true);
   assert.equal(options.maxConsecutiveFailures, 4);
   assert.equal(options.headless, true);
   assert.equal(options.skipNsfw, true);

@@ -1,24 +1,18 @@
 # SoyScraper
 
-SoyScraper downloads images from soybooru and provides a lightweight local web UI for browsing by tags, variants, and post id.
+SoyScraper downloads media from soybooru, stores metadata in SQLite, and provides a local web UI for browsing by tag, variant, and post ID.
 
-## Structure
+## Install
 
-- `src/` application runtime code
-- `src/scraper/` scraping and download logic
-- `src/fs/` filesystem helpers
-- `scripts/` one-off scripts (e.g., single-post test)
-- `webui/` local browser UI + API
-- `data/` downloaded content (ignored by git)
-  - `data/metadata.sqlite` stores post metadata (tags, variants, stats)
-
-## Usage
-
-Install dependencies:
+From the project root:
 
 ```bash
-npm install
+npm run setup
 ```
+
+`setup` is made for Debian/Ubuntu first and also supports common package managers on other Linux distros and macOS.
+
+## Use
 
 Download posts:
 
@@ -39,25 +33,16 @@ Single post test:
 ```bash
 npm run single-post-test 12345
 ```
-
 Start the web UI:
 
 ```bash
 npm run webui
 ```
 
-## Configuration
+Then open `http://localhost:3000`.
 
-Environment variables:
+If antivirus setup fails (this is currently running ClamAV), you can still run downloads with:
 
-- `SOYSCRAPER_DOWNLOAD_DIR`: override where images are stored (default: `data/downloadedImages`)
-- `SOYSCRAPER_IMAGE_LAYOUT`: image folder layout (`bucket` default, or `flat`)
-- `SOYSCRAPER_IMAGE_BUCKET_SIZE`: bucket size when layout is `bucket` (default: `1000`)
-- `SOYSCRAPER_METADATA_DB`: override where metadata is stored (default: `data/metadata.sqlite`)
-- `PORT`: web UI port (default: `3000`)
-
-
-## Notes
-
-The web UI indexes filenames and folder names to enable quick searches by `tag:`, `variant:`, or `post:`.
-Images are bucketed into subfolders by post number (e.g., `data/downloadedImages/000000-000999`) unless you set `SOYSCRAPER_IMAGE_LAYOUT=flat`.
+```bash
+SOYSCRAPER_REQUIRE_VIRUS_SCAN=false npm start
+```

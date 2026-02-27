@@ -1,7 +1,5 @@
 const fs = require('fs');
 const path = require('path');
-const readline = require('readline');
-const { spawn } = require('child_process');
 const downloadImagesModule = require('./downloadImages.js');
 const maxPostCheckerModule = require('./maxPostChecker.js');
 const browserModule = require('./browser.js');
@@ -50,66 +48,18 @@ function getMediaSafetyPreflightConfig(options = {}) {
   return { strictMediaSafety, requireVirusScan, scannerBin };
 }
 
-function promptYesNo(question) {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    rl.question(question, (answer) => {
-      rl.close();
-      const normalized = String(answer || '').trim().toLowerCase();
-      if (!normalized || normalized === 'y' || normalized === 'yes') {
-        resolve(true);
-        return;
-      }
-      resolve(false);
-    });
-  });
-}
-
-function runInstallerScript(scriptPath) {
-  return new Promise((resolve, reject) => {
-    const child = spawn('bash', [scriptPath], {
-      cwd: path.resolve(__dirname, '..', '..'),
-      stdio: 'inherit',
-    });
-    child.once('error', (err) => reject(err));
-    child.once('close', (code) => resolve(code));
-  });
-}
-
 async function ensureVirusScannerAvailable(options = {}) {
   const { strictMediaSafety, requireVirusScan, scannerBin } = getMediaSafetyPreflightConfig(options);
   if (!strictMediaSafety || !requireVirusScan) return;
   if (commandExists(scannerBin)) return;
 
-  const scriptPath = path.resolve(__dirname, '..', '..', 'scripts', 'install-clamav.sh');
   const missingMessage = [
     `Strict media safety requires virus scanner "${scannerBin}", but it is not installed.`,
-    `Run: npm run setup:clamav`,
+    `Run: npm run setup`,
     `Or bypass temporarily: SOYSCRAPER_REQUIRE_VIRUS_SCAN=false npm start`,
   ].join('\n');
   console.error(missingMessage);
-
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    throw new Error(`Missing required virus scanner binary: ${scannerBin}`);
-  }
-  if (!fs.existsSync(scriptPath)) {
-    throw new Error(`Installer script not found: ${scriptPath}`);
-  }
-
-  const shouldInstall = await promptYesNo('Install ClamAV now? [Y/n] ');
-  if (!shouldInstall) {
-    throw new Error(`Cannot continue without required virus scanner: ${scannerBin}`);
-  }
-
-  console.log('Running ClamAV installer...');
-  const code = await runInstallerScript(scriptPath);
-  if (code !== 0) {
-    throw new Error(`ClamAV installer failed with exit code ${code}`);
-  }
-  if (!commandExists(scannerBin)) {
-    throw new Error(`Scanner "${scannerBin}" still not found after install`);
-  }
-  console.log(`Virus scanner is ready: ${scannerBin}`);
+  throw new Error(`Missing required virus scanner binary: ${scannerBin}`);
 }
 
 /** Random delay around 2s with +/-25% jitter (1500-2500ms). */
@@ -239,7 +189,7 @@ Options:
                      quarantine write, optional antivirus scan)
   --no-strict-media-safety
                      Disable strict media checks (not recommended)
-  setup helper: npm run setup:clamav
+  setup helper: npm run setup
   -h, --help          Show this help text
 `);
 }
